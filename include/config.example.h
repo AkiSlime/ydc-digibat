@@ -20,6 +20,19 @@
 #define PROXMOX_REFRESH_MS 5000
 #define WEATHER_REFRESH_MS 10000
 
+// Tamagotchi routines. Times use the ESP32 local timezone configured below.
+#define PET_TIMEZONE "CET-1CEST,M3.5.0/2,M10.5.0/3"
+#define PET_NTP_SERVER_1 "pool.ntp.org"
+#define PET_NTP_SERVER_2 "time.nist.gov"
+#define PET_FEED_HOUR 13
+#define PET_FEED_MINUTE 0
+#define PET_SLEEP_HOUR 22
+#define PET_SLEEP_MINUTE 30
+#define PET_WAKE_HOUR 8
+#define PET_WAKE_MINUTE 0
+#define PET_HOT_ALERT_C 30.0f
+#define PET_HOT_CLEAR_C 29.0f
+
 // ESP32 NodeMCU-32S / ESP-32S Kit pinout.
 // Keep GPIO6-GPIO11 free: they are wired to the onboard flash.
 // Avoid GPIO0, GPIO2, GPIO12 and GPIO15 for peripherals unless you know the boot strapping impact.

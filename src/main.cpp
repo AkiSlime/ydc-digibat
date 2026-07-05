@@ -1,8 +1,13 @@
 #include <Arduino.h>
 #include <ArduinoJson.h>
 #include <HTTPClient.h>
+#include <Preferences.h>
 #include <U8g2lib.h>
 #include <WiFi.h>
+#include <time.h>
+
+#include "tamagotchi_bat_sprites.h"
+#include "tamagotchi_sprites.h"
 
 #if __has_include("config.h")
 #include "config.h"
@@ -18,6 +23,50 @@ U8G2_SH1106_128X64_NONAME_F_SW_I2C oled(
 
 const uint8_t MAX_GUESTS = 6;
 const uint8_t BASE_PAGE_COUNT = 3;
+
+#ifndef PET_TIMEZONE
+#define PET_TIMEZONE "CET-1CEST,M3.5.0/2,M10.5.0/3"
+#endif
+
+#ifndef PET_NTP_SERVER_1
+#define PET_NTP_SERVER_1 "pool.ntp.org"
+#endif
+
+#ifndef PET_NTP_SERVER_2
+#define PET_NTP_SERVER_2 "time.nist.gov"
+#endif
+
+#ifndef PET_FEED_HOUR
+#define PET_FEED_HOUR 13
+#endif
+
+#ifndef PET_FEED_MINUTE
+#define PET_FEED_MINUTE 0
+#endif
+
+#ifndef PET_SLEEP_HOUR
+#define PET_SLEEP_HOUR 22
+#endif
+
+#ifndef PET_SLEEP_MINUTE
+#define PET_SLEEP_MINUTE 30
+#endif
+
+#ifndef PET_WAKE_HOUR
+#define PET_WAKE_HOUR 8
+#endif
+
+#ifndef PET_WAKE_MINUTE
+#define PET_WAKE_MINUTE 0
+#endif
+
+#ifndef PET_HOT_ALERT_C
+#define PET_HOT_ALERT_C 30.0f
+#endif
+
+#ifndef PET_HOT_CLEAR_C
+#define PET_HOT_CLEAR_C 29.0f
+#endif
 
 struct GuestMetrics {
   String type = "";
@@ -63,8 +112,9 @@ struct WeatherMetrics {
 
 ProxmoxMetrics proxmox;
 WeatherMetrics weather;
+Preferences petPrefs;
 
-const char *FIRMWARE_VERSION = "OLED v14";
+const char *FIRMWARE_VERSION = "OLED v15 PET";
 
 enum DashboardPage : uint8_t {
   PAGE_DASHBOARD = 0,
@@ -72,8 +122,28 @@ enum DashboardPage : uint8_t {
   PAGE_NETWORK = 2,
 };
 
+enum PetMenuAction : uint8_t {
+  PET_ACTION_FEED = 0,
+  PET_ACTION_SLEEP = 1,
+  PET_ACTION_PAGES = 2,
+  PET_ACTION_SCREEN_OFF = 3,
+  PET_ACTION_BACK = 4,
+  PET_ACTION_COUNT = 5,
+};
+
+struct PetState {
+  bool asleep = false;
+  bool sleepUntilMorning = false;
+  bool hotAlert = false;
+  int32_t fedDay = -1;
+  int32_t sleepStartDay = -1;
+};
+
 uint8_t currentPage = PAGE_DASHBOARD;
 bool displayEnabled = true;
+bool petMenuOpen = false;
+uint8_t petMenuIndex = PET_ACTION_FEED;
+bool timeConfigured = false;
 
 uint32_t lastProxmoxPollMs = 0;
 uint32_t lastWeatherPollMs = 0;
@@ -89,6 +159,7 @@ volatile bool rightButtonPending = false;
 
 const uint32_t BUTTON_LOCKOUT_MS = 120;
 const uint32_t WEATHER_NOTICE_MS = 5000;
+PetState pet;
 
 void IRAM_ATTR onLeftButtonFall() {
   leftButtonPending = true;
@@ -327,6 +398,186 @@ String truncateText(const String &value, uint8_t maxChars) {
   return value.substring(0, maxChars - 1) + ".";
 }
 
+bool readLocalTime(struct tm &timeInfo) {
+  return getLocalTime(&timeInfo, 0);
+}
+
+int32_t dayKey(const struct tm &timeInfo) {
+  return static_cast<int32_t>(timeInfo.tm_year + 1900) * 1000 + timeInfo.tm_yday;
+}
+
+uint16_t minutesSinceMidnight(const struct tm &timeInfo) {
+  return static_cast<uint16_t>(timeInfo.tm_hour * 60 + timeInfo.tm_min);
+}
+
+uint16_t configuredMinutes(uint8_t hour, uint8_t minute) {
+  return static_cast<uint16_t>(hour * 60 + minute);
+}
+
+bool isSleepWindow(uint16_t nowMinutes) {
+  const uint16_t sleepMinutes = configuredMinutes(PET_SLEEP_HOUR, PET_SLEEP_MINUTE);
+  const uint16_t wakeMinutes = configuredMinutes(PET_WAKE_HOUR, PET_WAKE_MINUTE);
+
+  if (sleepMinutes > wakeMinutes) {
+    return nowMinutes >= sleepMinutes || nowMinutes < wakeMinutes;
+  }
+
+  return nowMinutes >= sleepMinutes && nowMinutes < wakeMinutes;
+}
+
+String formatClockFromNtp() {
+  struct tm timeInfo;
+  if (!readLocalTime(timeInfo)) {
+    return "";
+  }
+
+  char buffer[6];
+  snprintf(buffer, sizeof(buffer), "%02d:%02d", timeInfo.tm_hour, timeInfo.tm_min);
+  return String(buffer);
+}
+
+void configureTimeIfNeeded() {
+  if (timeConfigured || WiFi.status() != WL_CONNECTED) {
+    return;
+  }
+
+  configTzTime(PET_TIMEZONE, PET_NTP_SERVER_1, PET_NTP_SERVER_2);
+  timeConfigured = true;
+  Serial.println("NTP configured");
+}
+
+void loadPetState() {
+  pet.asleep = petPrefs.getBool("asleep", false);
+  pet.sleepUntilMorning = petPrefs.getBool("sleepWake", false);
+  pet.hotAlert = petPrefs.getBool("hot", false);
+  pet.fedDay = petPrefs.getInt("fedDay", -1);
+  pet.sleepStartDay = petPrefs.getInt("sleepDay", -1);
+  displayEnabled = petPrefs.getBool("display", true);
+}
+
+void savePetState() {
+  petPrefs.putBool("asleep", pet.asleep);
+  petPrefs.putBool("sleepWake", pet.sleepUntilMorning);
+  petPrefs.putBool("hot", pet.hotAlert);
+  petPrefs.putInt("fedDay", pet.fedDay);
+  petPrefs.putInt("sleepDay", pet.sleepStartDay);
+  petPrefs.putBool("display", displayEnabled);
+}
+
+bool hasConnectionAlert() {
+  return WiFi.status() != WL_CONNECTED || !proxmox.valid;
+}
+
+bool hasMealAlert() {
+  struct tm timeInfo;
+  if (!readLocalTime(timeInfo)) {
+    return false;
+  }
+
+  const uint16_t feedMinutes = configuredMinutes(PET_FEED_HOUR, PET_FEED_MINUTE);
+  return minutesSinceMidnight(timeInfo) >= feedMinutes && pet.fedDay != dayKey(timeInfo);
+}
+
+void updatePetRoutine() {
+  bool changed = false;
+
+  if (weather.valid && !isnan(weather.temperature)) {
+    if (!pet.hotAlert && weather.temperature >= PET_HOT_ALERT_C) {
+      pet.hotAlert = true;
+      changed = true;
+    } else if (pet.hotAlert && weather.temperature < PET_HOT_CLEAR_C) {
+      pet.hotAlert = false;
+      changed = true;
+    }
+  }
+
+  struct tm timeInfo;
+  if (readLocalTime(timeInfo)) {
+    const int32_t today = dayKey(timeInfo);
+    const uint16_t nowMinutes = minutesSinceMidnight(timeInfo);
+    const bool sleepWindow = isSleepWindow(nowMinutes);
+
+    if (sleepWindow && !pet.asleep) {
+      pet.asleep = true;
+      pet.sleepUntilMorning = false;
+      pet.sleepStartDay = today;
+      changed = true;
+    } else if (!sleepWindow && pet.asleep) {
+      const uint16_t wakeMinutes = configuredMinutes(PET_WAKE_HOUR, PET_WAKE_MINUTE);
+      const bool morningReached = nowMinutes >= wakeMinutes;
+      const bool sleptAcrossDay = pet.sleepStartDay < 0 || pet.sleepStartDay != today;
+
+      if (!pet.sleepUntilMorning || (morningReached && sleptAcrossDay)) {
+        pet.asleep = false;
+        pet.sleepUntilMorning = false;
+        changed = true;
+      }
+    }
+  }
+
+  if (changed) {
+    savePetState();
+  }
+}
+
+void updateAlertLed() {
+  digitalWrite(RED_LED_PIN, (hasMealAlert() || pet.hotAlert) ? HIGH : LOW);
+}
+
+const char *petMenuLabel(uint8_t index) {
+  switch (index) {
+  case PET_ACTION_FEED:
+    return "NOURRIR";
+  case PET_ACTION_SLEEP:
+    return pet.asleep ? "REVEIL" : "DODO";
+  case PET_ACTION_PAGES:
+    return "PAGES";
+  case PET_ACTION_SCREEN_OFF:
+    return "ECRAN OFF";
+  case PET_ACTION_BACK:
+    return "RETOUR";
+  default:
+    return "";
+  }
+}
+
+void executePetAction() {
+  struct tm timeInfo;
+  const bool hasTime = readLocalTime(timeInfo);
+
+  switch (petMenuIndex) {
+  case PET_ACTION_FEED:
+    if (hasTime) {
+      pet.fedDay = dayKey(timeInfo);
+    }
+    petMenuOpen = false;
+    savePetState();
+    break;
+  case PET_ACTION_SLEEP:
+    pet.asleep = !pet.asleep;
+    pet.sleepUntilMorning = pet.asleep;
+    pet.sleepStartDay = hasTime ? dayKey(timeInfo) : -1;
+    petMenuOpen = false;
+    savePetState();
+    break;
+  case PET_ACTION_PAGES:
+    petMenuOpen = false;
+    currentPage = PAGE_PROXMOX;
+    break;
+  case PET_ACTION_SCREEN_OFF:
+    petMenuOpen = false;
+    displayEnabled = false;
+    oled.setPowerSave(1);
+    savePetState();
+    break;
+  case PET_ACTION_BACK:
+    petMenuOpen = false;
+    break;
+  default:
+    break;
+  }
+}
+
 uint8_t pageCount() {
   return BASE_PAGE_COUNT + proxmox.guestCount;
 }
@@ -372,25 +623,53 @@ void handleButtons() {
   const bool selectPressed = consumeButtonPress(selectButtonPending, lastSelectPressMs);
   const bool rightPressed = consumeButtonPress(rightButtonPending, lastRightPressMs);
 
-  if (selectPressed) {
-    displayEnabled = !displayEnabled;
-    oled.setPowerSave(displayEnabled ? 0 : 1);
-    Serial.print("BTN SELECT -> display ");
-    Serial.println(displayEnabled ? "on" : "off");
+  if (!displayEnabled) {
+    if (leftPressed || selectPressed || rightPressed) {
+      displayEnabled = true;
+      oled.setPowerSave(0);
+      savePetState();
+      Serial.println("BTN -> display on");
+    }
+    return;
   }
 
-  if (!displayEnabled) {
+  if (petMenuOpen) {
+    if (leftPressed) {
+      petMenuIndex = petMenuIndex == 0 ? PET_ACTION_COUNT - 1 : petMenuIndex - 1;
+    }
+
+    if (rightPressed) {
+      petMenuIndex = (petMenuIndex + 1) % PET_ACTION_COUNT;
+    }
+
+    if (selectPressed) {
+      executePetAction();
+    }
+
     return;
+  }
+
+  if (selectPressed) {
+    if (currentPage == PAGE_DASHBOARD) {
+      petMenuOpen = true;
+      petMenuIndex = PET_ACTION_FEED;
+      Serial.println("BTN SELECT -> pet menu");
+    } else {
+      currentPage = PAGE_DASHBOARD;
+      Serial.println("BTN SELECT -> home");
+    }
   }
 
   if (leftPressed) {
     nextPage();
+    petMenuOpen = false;
     Serial.print("BTN NEXT -> page ");
     Serial.println(static_cast<uint8_t>(currentPage) + 1);
   }
 
   if (rightPressed) {
     previousPage();
+    petMenuOpen = false;
     Serial.print("BTN PREV -> page ");
     Serial.println(static_cast<uint8_t>(currentPage) + 1);
   }
@@ -475,34 +754,115 @@ void renderLoading(const String &line1, const String &line2) {
   oled.sendBuffer();
 }
 
+void drawTinyBar(uint8_t x, uint8_t y, uint8_t value) {
+  const uint8_t width = 22;
+  const uint8_t fill = map(value > 100 ? 100 : value, 0, 100, 0, width - 2);
+  oled.drawFrame(x, y, width, 5);
+  oled.drawBox(x + 1, y + 1, fill, 3);
+}
+
+void drawPetGauge(uint8_t x, const uint8_t *icon, uint8_t value) {
+  oled.drawXBMP(x, 47, TAMAGOTCHI_ICON_WIDTH, TAMAGOTCHI_ICON_HEIGHT, icon);
+  drawTinyBar(x + 18, 55, value);
+}
+
+void drawSpeechBubble(const String &message) {
+  if (message.length() == 0) {
+    return;
+  }
+
+  oled.setFont(u8g2_font_5x8_tf);
+  uint8_t bubbleWidth = oled.getStrWidth(message.c_str()) + 8;
+  if (bubbleWidth > 46) {
+    bubbleWidth = 46;
+  }
+  const uint8_t x = 128 - bubbleWidth;
+  oled.drawRFrame(x, 17, bubbleWidth, 13, 2);
+  oled.setCursor(x + 4, 26);
+  oled.print(message);
+}
+
+void drawPetMenu() {
+  oled.drawBox(0, 45, 128, 19);
+  oled.setDrawColor(0);
+  oled.setFont(u8g2_font_6x12_tf);
+  oled.setCursor(4, 59);
+  oled.print("<");
+
+  const char *label = petMenuLabel(petMenuIndex);
+  const int labelWidth = oled.getStrWidth(label);
+  oled.setCursor((128 - labelWidth) / 2, 59);
+  oled.print(label);
+
+  oled.setCursor(119, 59);
+  oled.print(">");
+  oled.setDrawColor(1);
+}
+
+String petMessage() {
+  if (hasConnectionAlert()) {
+    return "NET KO";
+  }
+
+  if (pet.hotAlert) {
+    return "CHAUD";
+  }
+
+  if (hasMealAlert()) {
+    return "MIAM?";
+  }
+
+  if (pet.asleep) {
+    return "ZZZ";
+  }
+
+  return "";
+}
+
+const uint8_t *currentPetFrame() {
+  const uint8_t frame = (millis() / 220) % TAMAGOTCHI_BAT_FRAME_COUNT;
+
+  if (hasConnectionAlert()) {
+    return tmg_bat_angry_hurt_frames[frame];
+  }
+
+  if (pet.hotAlert || hasMealAlert()) {
+    return tmg_bat_angry_idle_frames[frame];
+  }
+
+  return tmg_bat_normal_idle_frames[frame];
+}
+
 void renderDashboardPage() {
   oled.clearBuffer();
 
-  String time = weatherTime(weather.datetime);
+  String time = formatClockFromNtp();
+  if (time.length() == 0) {
+    time = weatherTime(weather.datetime);
+  }
   if (time.length() == 0) {
     time = "--:--";
   }
 
-  String date = weatherDateShort(weather.datetime);
-  if (date.length() == 0) {
-    date = "--/--/----";
-  }
-
-  String humidity = "-- %";
-  if (!isnan(weather.humidity)) {
-    humidity = String(lround(weather.humidity)) + " %";
-  }
-
-  drawDateTimeBlock(0, 0, time, date);
+  oled.setFont(u8g2_font_7x14B_tf);
+  oled.setCursor(0, 11);
+  oled.print(time);
   drawRightAlignedTemperature(127, 12, weather.temperature);
-  drawRightAlignedText(127, 27, humidity);
 
-  drawDottedFrame(0, 34, 128, 30);
-  oled.drawVLine(42, 38, 22);
-  oled.drawVLine(85, 38, 22);
-  drawMetricCell(0, 34, 42, proxmox.cpu, "CPU");
-  drawMetricCell(43, 34, 42, proxmox.ram, "RAM");
-  drawMetricCell(86, 34, 42, proxmox.storage, "DISK");
+  oled.drawXBMP(48, 14, TAMAGOTCHI_BAT_FRAME_WIDTH, TAMAGOTCHI_BAT_FRAME_HEIGHT, currentPetFrame());
+  drawSpeechBubble(petMessage());
+
+  const uint8_t hunger = hasMealAlert() ? 25 : 100;
+  const uint8_t energy = pet.hotAlert || hasConnectionAlert() ? 45 : 85;
+  const uint8_t sleep = pet.asleep ? 100 : 55;
+
+  drawPetGauge(0, tmg_icon_hunger, hunger);
+  drawPetGauge(43, tmg_icon_energy, energy);
+  drawPetGauge(86, tmg_icon_sleep, sleep);
+
+  if (petMenuOpen) {
+    drawPetMenu();
+  }
 
   oled.sendBuffer();
 }
@@ -631,13 +991,18 @@ void renderOled() {
     currentPage = PAGE_DASHBOARD;
   }
 
-  if (WiFi.status() != WL_CONNECTED) {
-    renderLoading("WiFi connect", WIFI_SSID);
+  if (currentPage == PAGE_DASHBOARD) {
+    renderDashboardPage();
     return;
   }
 
   if (currentPage == PAGE_NETWORK) {
     renderNetworkPage();
+    return;
+  }
+
+  if (WiFi.status() != WL_CONNECTED) {
+    renderLoading("WiFi connect", WIFI_SSID);
     return;
   }
 
@@ -672,6 +1037,8 @@ void setup() {
   pinMode(BUTTON_RIGHT_PIN, INPUT_PULLUP);
   pinMode(RED_LED_PIN, OUTPUT);
   digitalWrite(RED_LED_PIN, LOW);
+  petPrefs.begin("pet", false);
+  loadPetState();
 
   attachInterrupt(digitalPinToInterrupt(BUTTON_LEFT_PIN), onLeftButtonFall, FALLING);
   attachInterrupt(digitalPinToInterrupt(BUTTON_SELECT_PIN), onSelectButtonFall, FALLING);
@@ -694,6 +1061,7 @@ void setup() {
 #endif
 
   oled.begin();
+  oled.setPowerSave(displayEnabled ? 0 : 1);
 
   WiFi.setAutoReconnect(true);
   connectWifi();
@@ -709,6 +1077,7 @@ void loop() {
 
   handleButtons();
   connectWifi();
+  configureTimeIfNeeded();
 
   const uint32_t now = millis();
 
@@ -722,6 +1091,8 @@ void loop() {
     pollWeather();
   }
 
+  updatePetRoutine();
+  updateAlertLed();
   handleButtons();
   renderOled();
   delay(50);
