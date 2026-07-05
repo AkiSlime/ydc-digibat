@@ -5,6 +5,7 @@
 #include <Preferences.h>
 #include <U8g2lib.h>
 #include <WiFi.h>
+#include <Wire.h>
 #include <time.h>
 
 #include "tamagotchi_bat_sprites.h"
@@ -15,10 +16,8 @@
 #include "config.example.h"
 #endif
 
-U8G2_SH1106_128X64_NONAME_F_SW_I2C oled(
+U8G2_SH1106_128X64_NONAME_F_HW_I2C oled(
     U8G2_R0,
-    OLED_SCL_PIN,
-    OLED_SDA_PIN,
     U8X8_PIN_NONE);
 
 const uint8_t MAX_GUESTS = 6;
@@ -168,7 +167,17 @@ volatile bool rightButtonPending = false;
 
 const uint32_t BUTTON_LOCKOUT_MS = 120;
 const uint32_t WEATHER_NOTICE_MS = 5000;
+const uint16_t PET_ANIMATION_FRAME_MS = 120;
+const uint8_t PET_RENDER_DELAY_MS = 20;
+const uint8_t PET_SCALE_NUM = 3;
+const uint8_t PET_SCALE_DEN = 2;
+const uint8_t PET_SCALED_FRAME_WIDTH = (TAMAGOTCHI_BAT_FRAME_WIDTH * PET_SCALE_NUM) / PET_SCALE_DEN;
+const uint8_t PET_SCALED_FRAME_HEIGHT = (TAMAGOTCHI_BAT_FRAME_HEIGHT * PET_SCALE_NUM) / PET_SCALE_DEN;
+const uint8_t PET_SCALED_FRAME_BYTES = ((PET_SCALED_FRAME_WIDTH + 7) / 8) * PET_SCALED_FRAME_HEIGHT;
 PetState pet;
+uint8_t petNormalIdleFrames[TAMAGOTCHI_BAT_FRAME_COUNT][PET_SCALED_FRAME_BYTES];
+uint8_t petAngryIdleFrames[TAMAGOTCHI_BAT_FRAME_COUNT][PET_SCALED_FRAME_BYTES];
+uint8_t petAngryHurtFrames[TAMAGOTCHI_BAT_FRAME_COUNT][PET_SCALED_FRAME_BYTES];
 
 void IRAM_ATTR onLeftButtonFall() {
   leftButtonPending = true;
@@ -797,18 +806,31 @@ bool readXbmPixel(const uint8_t *bitmap, uint8_t width, uint8_t x, uint8_t y) {
   return (value & (1 << (x % 8))) != 0;
 }
 
-void drawScaledXbm(uint8_t x, uint8_t y, uint8_t width, uint8_t height, const uint8_t *bitmap, uint8_t scaleNum, uint8_t scaleDen) {
-  const uint8_t scaledWidth = (width * scaleNum) / scaleDen;
-  const uint8_t scaledHeight = (height * scaleNum) / scaleDen;
+void writeXbmPixel(uint8_t *bitmap, uint8_t width, uint8_t x, uint8_t y) {
+  const uint8_t bytesPerRow = (width + 7) / 8;
+  const uint16_t byteIndex = static_cast<uint16_t>(y) * bytesPerRow + (x / 8);
+  bitmap[byteIndex] |= 1 << (x % 8);
+}
 
-  for (uint8_t dy = 0; dy < scaledHeight; dy++) {
-    const uint8_t sourceY = (dy * scaleDen) / scaleNum;
-    for (uint8_t dx = 0; dx < scaledWidth; dx++) {
-      const uint8_t sourceX = (dx * scaleDen) / scaleNum;
-      if (readXbmPixel(bitmap, width, sourceX, sourceY)) {
-        oled.drawPixel(x + dx, y + dy);
+void buildScaledXbm(const uint8_t *source, uint8_t *target) {
+  memset(target, 0, PET_SCALED_FRAME_BYTES);
+
+  for (uint8_t dy = 0; dy < PET_SCALED_FRAME_HEIGHT; dy++) {
+    const uint8_t sourceY = (dy * PET_SCALE_DEN) / PET_SCALE_NUM;
+    for (uint8_t dx = 0; dx < PET_SCALED_FRAME_WIDTH; dx++) {
+      const uint8_t sourceX = (dx * PET_SCALE_DEN) / PET_SCALE_NUM;
+      if (readXbmPixel(source, TAMAGOTCHI_BAT_FRAME_WIDTH, sourceX, sourceY)) {
+        writeXbmPixel(target, PET_SCALED_FRAME_WIDTH, dx, dy);
       }
     }
+  }
+}
+
+void buildScaledPetFrames() {
+  for (uint8_t frame = 0; frame < TAMAGOTCHI_BAT_FRAME_COUNT; frame++) {
+    buildScaledXbm(tmg_bat_normal_idle_frames[frame], petNormalIdleFrames[frame]);
+    buildScaledXbm(tmg_bat_angry_idle_frames[frame], petAngryIdleFrames[frame]);
+    buildScaledXbm(tmg_bat_angry_hurt_frames[frame], petAngryHurtFrames[frame]);
   }
 }
 
@@ -879,17 +901,17 @@ String petMessage() {
 }
 
 const uint8_t *currentPetFrame() {
-  const uint8_t frame = (millis() / 220) % TAMAGOTCHI_BAT_FRAME_COUNT;
+  const uint8_t frame = (millis() / PET_ANIMATION_FRAME_MS) % TAMAGOTCHI_BAT_FRAME_COUNT;
 
   if (hasConnectionAlert()) {
-    return tmg_bat_angry_hurt_frames[frame];
+    return petAngryHurtFrames[frame];
   }
 
   if (pet.hotAlert || hasMealAlert()) {
-    return tmg_bat_angry_idle_frames[frame];
+    return petAngryIdleFrames[frame];
   }
 
-  return tmg_bat_normal_idle_frames[frame];
+  return petNormalIdleFrames[frame];
 }
 
 void renderDashboardPage() {
@@ -909,7 +931,7 @@ void renderDashboardPage() {
   drawRightAlignedTemperature(127, 12, weather.temperature);
 
   drawSpeechBubble(petMessage());
-  drawScaledXbm(0, 16, TAMAGOTCHI_BAT_FRAME_WIDTH, TAMAGOTCHI_BAT_FRAME_HEIGHT, currentPetFrame(), 3, 2);
+  oled.drawXBM(0, 16, PET_SCALED_FRAME_WIDTH, PET_SCALED_FRAME_HEIGHT, currentPetFrame());
 
   const uint8_t hunger = hasMealAlert() ? 25 : 100;
   const uint8_t energy = pet.hotAlert || hasConnectionAlert() ? 45 : 85;
@@ -1098,13 +1120,16 @@ void setup() {
   digitalWrite(RED_LED_PIN, LOW);
   petPrefs.begin("pet", false);
   loadPetState();
+  buildScaledPetFrames();
 
   attachInterrupt(digitalPinToInterrupt(BUTTON_LEFT_PIN), onLeftButtonFall, FALLING);
   attachInterrupt(digitalPinToInterrupt(BUTTON_SELECT_PIN), onSelectButtonFall, FALLING);
   attachInterrupt(digitalPinToInterrupt(BUTTON_RIGHT_PIN), onRightButtonFall, FALLING);
 
 #ifdef OLED_DIAGNOSTIC_MODE
+  Wire.begin(OLED_SDA_PIN, OLED_SCL_PIN);
   oled.begin();
+  oled.setBusClock(400000);
   oled.clearBuffer();
   oled.setFont(u8g2_font_6x12_tf);
   oled.setCursor(0, 14);
@@ -1119,7 +1144,9 @@ void setup() {
   return;
 #endif
 
+  Wire.begin(OLED_SDA_PIN, OLED_SCL_PIN);
   oled.begin();
+  oled.setBusClock(400000);
   oled.setPowerSave(displayEnabled ? 0 : 1);
 
   WiFi.setAutoReconnect(true);
@@ -1156,5 +1183,5 @@ void loop() {
   updateAlertLed();
   handleButtons();
   renderOled();
-  delay(50);
+  delay(PET_RENDER_DELAY_MS);
 }
