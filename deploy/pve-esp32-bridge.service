@@ -1,0 +1,16 @@
+[Unit]
+Description=ESP32 Proxmox metrics bridge
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/pve-esp32-bridge.env
+WorkingDirectory=/opt/pve-esp32-bridge
+ExecStart=/usr/bin/python3 /opt/pve-esp32-bridge/proxmox_bridge.py
+Restart=always
+RestartSec=5
+User=root
+
+[Install]
+WantedBy=multi-user.target
