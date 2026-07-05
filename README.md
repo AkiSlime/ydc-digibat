@@ -231,8 +231,23 @@ OTA ready: admin-dashboard
 
 L'ESP32 doit rester allume et connecte au meme Wi-Fi que ton Mac.
 
+Commande rapide recommandee si `pio` n'est pas dans le `PATH`:
+
+```sh
+OTA_PASSWORD='MOT_DE_PASSE_OTA_SOLIDE' /Users/aki/.platformio/penv/bin/pio run -e nodemcu-32s-ota --target upload
+```
+
+Si `pio` fonctionne directement dans ton terminal, la version courte est:
+
 ```sh
 OTA_PASSWORD='MOT_DE_PASSE_OTA_SOLIDE' pio run -e nodemcu-32s-ota --target upload
+```
+
+Tu peux aussi exporter le mot de passe une seule fois dans le terminal courant:
+
+```sh
+export OTA_PASSWORD='MOT_DE_PASSE_OTA_SOLIDE'
+/Users/aki/.platformio/penv/bin/pio run -e nodemcu-32s-ota --target upload
 ```
 
 Si `admin-dashboard.local` ne resout pas sur ton reseau, remplace temporairement
