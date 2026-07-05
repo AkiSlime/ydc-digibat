@@ -1,4 +1,4 @@
-# Double Dashboard ESP32
+# Admin Dashboard ESP32
 
 Dashboard ESP32 NodeMCU-32S / ESP-32S Kit avec un affichage OLED:
 
