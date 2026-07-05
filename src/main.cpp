@@ -836,15 +836,15 @@ void buildScaledPetFrames() {
 
 void drawTinyBar(uint8_t x, uint8_t y, uint8_t width, uint8_t value) {
   const uint8_t fill = map(value > 100 ? 100 : value, 0, 100, 0, width - 2);
-  oled.drawFrame(x, y, width, 5);
-  oled.drawBox(x + 1, y + 1, fill, 3);
+  oled.drawFrame(x, y, width, 3);
+  oled.drawBox(x + 1, y + 1, fill, 1);
 }
 
 void drawPetGauge(uint8_t x, uint8_t y, char label, uint8_t value) {
-  oled.setFont(u8g2_font_6x13B_tf);
-  oled.setCursor(x, y + 11);
+  oled.setFont(u8g2_font_4x6_tf);
+  oled.setCursor(x, y + 5);
   oled.print(label);
-  drawTinyBar(x + 12, y + 4, 32, value);
+  drawTinyBar(x + 6, y + 2, 22, value);
 }
 
 void drawSpeechBubble(const String &message) {
@@ -937,9 +937,9 @@ void renderDashboardPage() {
   const uint8_t energy = pet.hotAlert || hasConnectionAlert() ? 45 : 85;
   const uint8_t sleep = pet.asleep ? 100 : 55;
 
-  drawPetGauge(84, 17, 'H', hunger);
-  drawPetGauge(84, 33, 'E', energy);
-  drawPetGauge(84, 49, 'S', sleep);
+  drawPetGauge(96, 26, 'H', hunger);
+  drawPetGauge(96, 37, 'E', energy);
+  drawPetGauge(96, 48, 'S', sleep);
 
   if (petMenuOpen) {
     drawPetMenu();
