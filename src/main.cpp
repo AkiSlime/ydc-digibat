@@ -791,16 +791,15 @@ void renderLoading(const String &line1, const String &line2) {
   oled.sendBuffer();
 }
 
-void drawTinyBar(uint8_t x, uint8_t y, uint8_t value) {
-  const uint8_t width = 22;
+void drawTinyBar(uint8_t x, uint8_t y, uint8_t width, uint8_t value) {
   const uint8_t fill = map(value > 100 ? 100 : value, 0, 100, 0, width - 2);
   oled.drawFrame(x, y, width, 5);
   oled.drawBox(x + 1, y + 1, fill, 3);
 }
 
-void drawPetGauge(uint8_t x, const uint8_t *icon, uint8_t value) {
-  oled.drawXBMP(x, 47, TAMAGOTCHI_ICON_WIDTH, TAMAGOTCHI_ICON_HEIGHT, icon);
-  drawTinyBar(x + 18, 55, value);
+void drawPetGauge(uint8_t x, uint8_t y, const uint8_t *icon, uint8_t value) {
+  oled.drawXBMP(x, y, TAMAGOTCHI_ICON_WIDTH, TAMAGOTCHI_ICON_HEIGHT, icon);
+  drawTinyBar(x + 15, y + 4, 28, value);
 }
 
 void drawSpeechBubble(const String &message) {
@@ -813,9 +812,9 @@ void drawSpeechBubble(const String &message) {
   if (bubbleWidth > 46) {
     bubbleWidth = 46;
   }
-  const uint8_t x = 128 - bubbleWidth;
-  oled.drawRFrame(x, 17, bubbleWidth, 13, 2);
-  oled.setCursor(x + 4, 26);
+  const uint8_t x = (128 - bubbleWidth) / 2;
+  oled.drawRFrame(x, 0, bubbleWidth, 13, 2);
+  oled.setCursor(x + 4, 9);
   oled.print(message);
 }
 
@@ -886,16 +885,16 @@ void renderDashboardPage() {
   oled.print(time);
   drawRightAlignedTemperature(127, 12, weather.temperature);
 
-  oled.drawXBMP(48, 14, TAMAGOTCHI_BAT_FRAME_WIDTH, TAMAGOTCHI_BAT_FRAME_HEIGHT, currentPetFrame());
   drawSpeechBubble(petMessage());
+  oled.drawXBMP(0, 18, TAMAGOTCHI_BAT_FRAME_WIDTH, TAMAGOTCHI_BAT_FRAME_HEIGHT, currentPetFrame());
 
   const uint8_t hunger = hasMealAlert() ? 25 : 100;
   const uint8_t energy = pet.hotAlert || hasConnectionAlert() ? 45 : 85;
   const uint8_t sleep = pet.asleep ? 100 : 55;
 
-  drawPetGauge(0, tmg_icon_hunger, hunger);
-  drawPetGauge(43, tmg_icon_energy, energy);
-  drawPetGauge(86, tmg_icon_sleep, sleep);
+  drawPetGauge(84, 17, tmg_icon_hunger, hunger);
+  drawPetGauge(84, 33, tmg_icon_energy, energy);
+  drawPetGauge(84, 49, tmg_icon_sleep, sleep);
 
   if (petMenuOpen) {
     drawPetMenu();
