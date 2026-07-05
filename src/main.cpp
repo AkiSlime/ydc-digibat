@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include <ArduinoJson.h>
+#include <ArduinoOTA.h>
 #include <HTTPClient.h>
 #include <Preferences.h>
 #include <U8g2lib.h>
@@ -66,6 +67,14 @@ const uint8_t BASE_PAGE_COUNT = 3;
 
 #ifndef PET_HOT_CLEAR_C
 #define PET_HOT_CLEAR_C 29.0f
+#endif
+
+#ifndef OTA_HOSTNAME
+#define OTA_HOSTNAME "admin-dashboard"
+#endif
+
+#ifndef OTA_PASSWORD
+#define OTA_PASSWORD "admin-dashboard-ota"
 #endif
 
 struct GuestMetrics {
@@ -144,6 +153,7 @@ bool displayEnabled = true;
 bool petMenuOpen = false;
 uint8_t petMenuIndex = PET_ACTION_FEED;
 bool timeConfigured = false;
+bool otaConfigured = false;
 
 uint32_t lastProxmoxPollMs = 0;
 uint32_t lastWeatherPollMs = 0;
@@ -444,6 +454,33 @@ void configureTimeIfNeeded() {
   configTzTime(PET_TIMEZONE, PET_NTP_SERVER_1, PET_NTP_SERVER_2);
   timeConfigured = true;
   Serial.println("NTP configured");
+}
+
+void configureOtaIfNeeded() {
+  if (otaConfigured || WiFi.status() != WL_CONNECTED) {
+    return;
+  }
+
+  ArduinoOTA.setHostname(OTA_HOSTNAME);
+  ArduinoOTA.setPassword(OTA_PASSWORD);
+  ArduinoOTA
+      .onStart([]() {
+        Serial.println("OTA start");
+      })
+      .onEnd([]() {
+        Serial.println("OTA end");
+      })
+      .onProgress([](unsigned int progress, unsigned int total) {
+        Serial.printf("OTA progress: %u%%\r", (progress * 100) / total);
+      })
+      .onError([](ota_error_t error) {
+        Serial.printf("OTA error[%u]\n", error);
+      });
+
+  ArduinoOTA.begin();
+  otaConfigured = true;
+  Serial.print("OTA ready: ");
+  Serial.println(OTA_HOSTNAME);
 }
 
 void loadPetState() {
@@ -1078,6 +1115,8 @@ void loop() {
   handleButtons();
   connectWifi();
   configureTimeIfNeeded();
+  configureOtaIfNeeded();
+  ArduinoOTA.handle();
 
   const uint32_t now = millis();
 

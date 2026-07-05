@@ -2,9 +2,10 @@
 
 Dashboard ESP32 NodeMCU-32S / ESP-32S Kit avec un affichage OLED:
 
-- trois jauges rondes OLED pour CPU, RAM et stockage Proxmox;
-- heure, temperature et date complete depuis la station meteo ESP32-C3.
-- navigation sur trois pages avec boutons gauche, droite et select.
+- page d'accueil Tamagotchi avec une chauve-souris pixel-art animee;
+- heure, temperature, alertes repas/chaud/connexion et jauges du compagnon;
+- pages details pour Proxmox, reseau, VMs et conteneurs LXC;
+- mises a jour OTA par Wi-Fi apres le premier flash USB.
 
 Le LCD HD44780 16 pins a ete retire du firmware. L'ancien cablage est conserve dans `docs/legacy-lcd.md`.
 
@@ -81,11 +82,11 @@ Si l'ecran reste noir avec ce test:
 
 ### Boutons menu
 
-Les trois boutons pilotent les pages OLED:
+Les trois boutons pilotent les pages OLED et le menu Tamagotchi:
 
 - GPIO25: page suivante;
 - GPIO32: page precedente;
-- select: eteindre ou rallumer l'ecran OLED.
+- select: ouvrir/valider le menu Tamagotchi sur la page d'accueil.
 
 | Bouton | ESP32 |
 | --- | --- |
@@ -97,16 +98,26 @@ Cablage: une patte du bouton sur le GPIO, l'autre sur GND. Le firmware utilise `
 
 Pages disponibles:
 
-- page 1: dashboard global avec CPU, RAM, disque, heure, temperature et date;
+- page 1: accueil Tamagotchi avec heure, temperature, jauges et bulles d'alerte;
 - page 2: details Proxmox avec CPU, RAM, disque et uptime;
 - page 3: details reseau avec RSSI Wi-Fi, IP ESP32, age des dernieres donnees PVE/meteo et IP de la station meteo.
 - pages suivantes: une page par VM ou conteneur LXC renvoye par Proxmox, avec CPU, RAM, disque et uptime.
 
-La station meteo ne bloque pas le dashboard. Si elle est indisponible au demarrage, la page 1 affiche des tirets pour l'heure/temperature jusqu'au premier retour valide. Si elle tombe apres avoir fonctionne, un message court `Meteo deconnectee` s'affiche, puis disparait; la page reseau continue d'indiquer l'etat `WX`.
+Depuis la page d'accueil, `Select` ouvre le menu:
+
+- `NOURRIR`: valide le repas du jour et eteint l'alerte repas;
+- `DODO` / `REVEIL`: active ou quitte le mode sommeil;
+- `PAGES`: va aux pages details;
+- `ECRAN OFF`: eteint l'OLED;
+- `RETOUR`: ferme le menu.
+
+Quand l'ecran est eteint, n'importe quel bouton le rallume.
+
+La page d'accueil reste disponible meme si le Wi-Fi ou le bridge Proxmox est KO. Dans ce cas, la chauve-souris affiche une bulle `NET KO`. La station meteo ne bloque pas le dashboard; si elle est indisponible, la temperature affiche des tirets jusqu'au premier retour valide.
 
 ### LED rouge
 
-La LED rouge est prevue pour une future alerte RAM.
+La LED rouge sert aux alertes simples du compagnon.
 
 | LED rouge | ESP32 |
 | --- | --- |
@@ -121,6 +132,13 @@ cathode LED -> GND
 ```
 
 Une resistance `220 ohms` fonctionne. Avec une LED rouge autour de `2.0V`, le courant sera environ `(3.3V - 2.0V) / 220 = 5.9 mA`, ce qui est raisonnable pour un GPIO ESP32. `330 ohms` marche aussi et sera un peu plus doux, environ `4 mA`.
+
+Comportement actuel:
+
+- a partir de 13:00, si le compagnon n'a pas ete nourri, la LED s'allume;
+- quand tu valides `NOURRIR`, la LED s'eteint pour l'alerte repas;
+- si la temperature est >= `30.0 C`, la LED s'allume;
+- l'alerte chaud se retire quand la temperature repasse sous `29.0 C`.
 
 ### Potentiometre utilisateur optionnel
 
@@ -145,6 +163,8 @@ Renseigne dans `include/config.h`:
 #define WIFI_PASSWORD "..."
 #define PROXMOX_METRICS_URL "http://IP_DU_BRIDGE:8080/metrics"
 #define WEATHER_URL "http://IP_DU_SECOND_ESP32/api"
+#define OTA_HOSTNAME "admin-dashboard"
+#define OTA_PASSWORD "MOT_DE_PASSE_OTA"
 ```
 
 Important: `PROXMOX_METRICS_URL` n'est pas l'URL de l'interface web Proxmox et ce n'est pas l'URL brute de l'API Proxmox. C'est l'URL du bridge `proxmox_bridge.py`, qui lui-meme va interroger Proxmox.
@@ -156,6 +176,74 @@ En reel, si ton serveur Proxmox a l'IP `192.168.1.20` et que tu fais tourner le 
 ```
 
 Le Mac ne sert que pour le test mock. En usage normal, il ne sert a rien.
+
+### Parametres Tamagotchi
+
+Les horaires et seuils sont configurables dans `include/config.h`:
+
+```cpp
+#define PET_TIMEZONE "CET-1CEST,M3.5.0/2,M10.5.0/3"
+#define PET_FEED_HOUR 13
+#define PET_FEED_MINUTE 0
+#define PET_SLEEP_HOUR 22
+#define PET_SLEEP_MINUTE 30
+#define PET_WAKE_HOUR 8
+#define PET_WAKE_MINUTE 0
+#define PET_HOT_ALERT_C 30.0f
+#define PET_HOT_CLEAR_C 29.0f
+```
+
+La timezone ci-dessus correspond a la France metropolitaine avec changement
+heure ete/hiver. L'ESP32 utilise NTP pour les routines horaires.
+
+## Mise a jour OTA par Wi-Fi
+
+L'OTA permet d'envoyer les futures mises a jour sans reconnecter l'ESP32 en USB.
+Il faut tout de meme faire un premier flash USB avec le firmware OTA.
+
+### 1. Configurer le mot de passe OTA
+
+Dans `include/config.h`, renseigne:
+
+```cpp
+#define OTA_HOSTNAME "admin-dashboard"
+#define OTA_PASSWORD "MOT_DE_PASSE_OTA_SOLIDE"
+```
+
+Le hostname sert a joindre l'ESP32 via mDNS: `admin-dashboard.local`.
+
+### 2. Premier flash en USB
+
+Branche l'ESP32 en USB, puis lance:
+
+```sh
+pio run -e nodemcu-32s --target upload
+pio device monitor
+```
+
+Quand le Wi-Fi est connecte, le moniteur serie doit afficher:
+
+```text
+OTA ready: admin-dashboard
+```
+
+### 3. Uploads suivants par Wi-Fi
+
+L'ESP32 doit rester allume et connecte au meme Wi-Fi que ton Mac.
+
+```sh
+OTA_PASSWORD='MOT_DE_PASSE_OTA_SOLIDE' pio run -e nodemcu-32s-ota --target upload
+```
+
+Si `admin-dashboard.local` ne resout pas sur ton reseau, remplace temporairement
+`upload_port` dans `platformio.ini` par l'adresse IP de l'ESP32:
+
+```ini
+upload_port = 192.168.1.xx
+```
+
+Pour une utilisation stable, reserve l'adresse IP de l'ESP32 dans ta box ou ton
+routeur.
 
 ## Format JSON attendu
 

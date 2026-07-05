@@ -33,6 +33,11 @@
 #define PET_HOT_ALERT_C 30.0f
 #define PET_HOT_CLEAR_C 29.0f
 
+// OTA updates over Wi-Fi. Flash once over USB, then use the `nodemcu-32s-ota`
+// PlatformIO environment while the ESP32 is powered on and connected to Wi-Fi.
+#define OTA_HOSTNAME "admin-dashboard"
+#define OTA_PASSWORD "CHANGE_ME_STRONG_OTA_PASSWORD"
+
 // ESP32 NodeMCU-32S / ESP-32S Kit pinout.
 // Keep GPIO6-GPIO11 free: they are wired to the onboard flash.
 // Avoid GPIO0, GPIO2, GPIO12 and GPIO15 for peripherals unless you know the boot strapping impact.
