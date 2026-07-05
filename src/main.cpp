@@ -8,7 +8,6 @@
 #include <time.h>
 
 #include "tamagotchi_bat_sprites.h"
-#include "tamagotchi_sprites.h"
 
 #if __has_include("config.h")
 #include "config.h"
@@ -791,15 +790,39 @@ void renderLoading(const String &line1, const String &line2) {
   oled.sendBuffer();
 }
 
+bool readXbmPixel(const uint8_t *bitmap, uint8_t width, uint8_t x, uint8_t y) {
+  const uint8_t bytesPerRow = (width + 7) / 8;
+  const uint16_t byteIndex = static_cast<uint16_t>(y) * bytesPerRow + (x / 8);
+  const uint8_t value = pgm_read_byte(bitmap + byteIndex);
+  return (value & (1 << (x % 8))) != 0;
+}
+
+void drawScaledXbm(uint8_t x, uint8_t y, uint8_t width, uint8_t height, const uint8_t *bitmap, uint8_t scaleNum, uint8_t scaleDen) {
+  const uint8_t scaledWidth = (width * scaleNum) / scaleDen;
+  const uint8_t scaledHeight = (height * scaleNum) / scaleDen;
+
+  for (uint8_t dy = 0; dy < scaledHeight; dy++) {
+    const uint8_t sourceY = (dy * scaleDen) / scaleNum;
+    for (uint8_t dx = 0; dx < scaledWidth; dx++) {
+      const uint8_t sourceX = (dx * scaleDen) / scaleNum;
+      if (readXbmPixel(bitmap, width, sourceX, sourceY)) {
+        oled.drawPixel(x + dx, y + dy);
+      }
+    }
+  }
+}
+
 void drawTinyBar(uint8_t x, uint8_t y, uint8_t width, uint8_t value) {
   const uint8_t fill = map(value > 100 ? 100 : value, 0, 100, 0, width - 2);
   oled.drawFrame(x, y, width, 5);
   oled.drawBox(x + 1, y + 1, fill, 3);
 }
 
-void drawPetGauge(uint8_t x, uint8_t y, const uint8_t *icon, uint8_t value) {
-  oled.drawXBMP(x, y, TAMAGOTCHI_ICON_WIDTH, TAMAGOTCHI_ICON_HEIGHT, icon);
-  drawTinyBar(x + 15, y + 4, 28, value);
+void drawPetGauge(uint8_t x, uint8_t y, char label, uint8_t value) {
+  oled.setFont(u8g2_font_6x13B_tf);
+  oled.setCursor(x, y + 11);
+  oled.print(label);
+  drawTinyBar(x + 12, y + 4, 32, value);
 }
 
 void drawSpeechBubble(const String &message) {
@@ -886,15 +909,15 @@ void renderDashboardPage() {
   drawRightAlignedTemperature(127, 12, weather.temperature);
 
   drawSpeechBubble(petMessage());
-  oled.drawXBMP(0, 18, TAMAGOTCHI_BAT_FRAME_WIDTH, TAMAGOTCHI_BAT_FRAME_HEIGHT, currentPetFrame());
+  drawScaledXbm(0, 16, TAMAGOTCHI_BAT_FRAME_WIDTH, TAMAGOTCHI_BAT_FRAME_HEIGHT, currentPetFrame(), 3, 2);
 
   const uint8_t hunger = hasMealAlert() ? 25 : 100;
   const uint8_t energy = pet.hotAlert || hasConnectionAlert() ? 45 : 85;
   const uint8_t sleep = pet.asleep ? 100 : 55;
 
-  drawPetGauge(84, 17, tmg_icon_hunger, hunger);
-  drawPetGauge(84, 33, tmg_icon_energy, energy);
-  drawPetGauge(84, 49, tmg_icon_sleep, sleep);
+  drawPetGauge(84, 17, 'H', hunger);
+  drawPetGauge(84, 33, 'E', energy);
+  drawPetGauge(84, 49, 'S', sleep);
 
   if (petMenuOpen) {
     drawPetMenu();
