@@ -1,6 +1,7 @@
 #include <Arduino.h>
 #include <ArduinoJson.h>
 #include <ArduinoOTA.h>
+#include <esp_system.h>
 #include <HTTPClient.h>
 #include <Preferences.h>
 #include <U8g2lib.h>
@@ -35,38 +36,6 @@ const uint8_t BASE_PAGE_COUNT = 3;
 #define PET_NTP_SERVER_2 "time.nist.gov"
 #endif
 
-#ifndef PET_FEED_HOUR
-#define PET_FEED_HOUR 12
-#endif
-
-#ifndef PET_FEED_MINUTE
-#define PET_FEED_MINUTE 0
-#endif
-
-#ifndef PET_AFTERNOON_WORK_HOUR
-#define PET_AFTERNOON_WORK_HOUR 14
-#endif
-
-#ifndef PET_AFTERNOON_WORK_MINUTE
-#define PET_AFTERNOON_WORK_MINUTE 0
-#endif
-
-#ifndef PET_CHILL_HOUR
-#define PET_CHILL_HOUR 18
-#endif
-
-#ifndef PET_CHILL_MINUTE
-#define PET_CHILL_MINUTE 0
-#endif
-
-#ifndef PET_SLEEP_HOUR
-#define PET_SLEEP_HOUR 23
-#endif
-
-#ifndef PET_SLEEP_MINUTE
-#define PET_SLEEP_MINUTE 30
-#endif
-
 #ifndef PET_WAKE_HOUR
 #define PET_WAKE_HOUR 8
 #endif
@@ -85,6 +54,66 @@ const uint8_t BASE_PAGE_COUNT = 3;
 
 #ifndef PET_NOTICE_MS
 #define PET_NOTICE_MS 3000
+#endif
+
+#ifndef PET_INITIAL_FOOD
+#define PET_INITIAL_FOOD 1
+#endif
+
+#ifndef PET_INITIAL_HUNGER
+#define PET_INITIAL_HUNGER 50
+#endif
+
+#ifndef PET_INITIAL_ENERGY
+#define PET_INITIAL_ENERGY 50
+#endif
+
+#ifndef PET_MAX_FOOD
+#define PET_MAX_FOOD 10
+#endif
+
+#ifndef PET_HUNT_MIN_ENERGY
+#define PET_HUNT_MIN_ENERGY 10
+#endif
+
+#ifndef PET_HUNT_ENERGY_COST
+#define PET_HUNT_ENERGY_COST 10
+#endif
+
+#ifndef PET_HUNT_MAX_HUNGER_COST
+#define PET_HUNT_MAX_HUNGER_COST 10
+#endif
+
+#ifndef PET_EAT_HUNGER_GAIN
+#define PET_EAT_HUNGER_GAIN 20
+#endif
+
+#ifndef PET_EAT_MAX_ENERGY_COST
+#define PET_EAT_MAX_ENERGY_COST 5
+#endif
+
+#ifndef PET_IDLE_HUNGER_LOSS_PER_HOUR
+#define PET_IDLE_HUNGER_LOSS_PER_HOUR 2
+#endif
+
+#ifndef PET_SLEEP_ENERGY_GAIN_PER_HOUR
+#define PET_SLEEP_ENERGY_GAIN_PER_HOUR 10
+#endif
+
+#ifndef PET_SLEEP_HUNGER_LOSS_PER_HOUR
+#define PET_SLEEP_HUNGER_LOSS_PER_HOUR 3
+#endif
+
+#ifndef PET_HUNT_DURATION_MS
+#define PET_HUNT_DURATION_MS (60UL * 60UL * 1000UL)
+#endif
+
+#ifndef PET_EAT_DURATION_MS
+#define PET_EAT_DURATION_MS (10UL * 60UL * 1000UL)
+#endif
+
+#ifndef PET_STAT_TICK_MS
+#define PET_STAT_TICK_MS (60UL * 60UL * 1000UL)
 #endif
 
 #ifndef OTA_HOSTNAME
@@ -150,25 +179,29 @@ enum DashboardPage : uint8_t {
 };
 
 enum PetMenuAction : uint8_t {
-  PET_ACTION_FEED = 0,
-  PET_ACTION_SLEEP = 1,
-  PET_ACTION_PAGES = 2,
+  PET_ACTION_HUNT = 0,
+  PET_ACTION_EAT = 1,
+  PET_ACTION_SLEEP = 2,
   PET_ACTION_SCREEN_OFF = 3,
   PET_ACTION_BACK = 4,
   PET_ACTION_COUNT = 5,
 };
 
-enum PetBaseMode : uint8_t {
-  PET_BASE_SLEEP = 0,
-  PET_BASE_WORK = 1,
-  PET_BASE_HUNGRY = 2,
-  PET_BASE_CHILL = 3,
+enum PetActionState : uint8_t {
+  PET_STATE_IDLE = 0,
+  PET_STATE_HUNT = 1,
+  PET_STATE_EAT = 2,
+  PET_STATE_SLEEP = 3,
 };
 
 enum PetNoticeType : uint8_t {
   PET_NOTICE_NONE = 0,
   PET_NOTICE_HOT = 1,
   PET_NOTICE_NETWORK = 2,
+  PET_NOTICE_NO_ENERGY = 3,
+  PET_NOTICE_NO_FOOD = 4,
+  PET_NOTICE_NO_HUNGRY = 5,
+  PET_NOTICE_BUSY = 6,
 };
 
 struct PetRenderSprite {
@@ -178,20 +211,23 @@ struct PetRenderSprite {
 };
 
 struct PetState {
-  bool asleep = false;
-  bool sleepUntilMorning = false;
+  uint8_t hunger = PET_INITIAL_HUNGER;
+  uint8_t energy = PET_INITIAL_ENERGY;
+  uint8_t food = PET_INITIAL_FOOD;
+  PetActionState action = PET_STATE_IDLE;
+  uint32_t actionStartedMs = 0;
+  uint32_t statTickMs = 0;
+  int32_t sleepWakeDay = -1;
   bool hotLatched = false;
   bool connectionAlertLatched = false;
   PetNoticeType notice = PET_NOTICE_NONE;
   uint32_t noticeUntilMs = 0;
-  int32_t fedDay = -1;
-  int32_t sleepStartDay = -1;
 };
 
 uint8_t currentPage = PAGE_DASHBOARD;
 bool displayEnabled = true;
 bool petMenuOpen = false;
-uint8_t petMenuIndex = PET_ACTION_FEED;
+uint8_t petMenuIndex = PET_ACTION_HUNT;
 bool timeConfigured = false;
 bool otaConfigured = false;
 String otaUiStatus = "init";
@@ -219,7 +255,7 @@ const uint8_t PET_SCALE_NUM = 2;
 const uint8_t PET_SCALE_DEN = 1;
 const uint8_t PET_X_LEFT = 0;
 const uint8_t PET_X_RIGHT = 24;
-const uint8_t PET_Y = 16;
+const uint8_t PET_Y = 10;
 PetState pet;
 
 void IRAM_ATTR onLeftButtonFall() {
@@ -475,17 +511,6 @@ uint16_t configuredMinutes(uint8_t hour, uint8_t minute) {
   return static_cast<uint16_t>(hour * 60 + minute);
 }
 
-bool isSleepWindow(uint16_t nowMinutes) {
-  const uint16_t sleepMinutes = configuredMinutes(PET_SLEEP_HOUR, PET_SLEEP_MINUTE);
-  const uint16_t wakeMinutes = configuredMinutes(PET_WAKE_HOUR, PET_WAKE_MINUTE);
-
-  if (sleepMinutes > wakeMinutes) {
-    return nowMinutes >= sleepMinutes || nowMinutes < wakeMinutes;
-  }
-
-  return nowMinutes >= sleepMinutes && nowMinutes < wakeMinutes;
-}
-
 String formatClockFromNtp() {
   struct tm timeInfo;
   if (!readLocalTime(timeInfo)) {
@@ -566,18 +591,36 @@ void configureOtaIfNeeded() {
 }
 
 void loadPetState() {
-  pet.asleep = petPrefs.getBool("asleep", false);
-  pet.sleepUntilMorning = petPrefs.getBool("sleepWake", false);
-  pet.fedDay = petPrefs.getInt("fedDay", -1);
-  pet.sleepStartDay = petPrefs.getInt("sleepDay", -1);
+  pet.hunger = petPrefs.getUChar("hunger", PET_INITIAL_HUNGER);
+  pet.energy = petPrefs.getUChar("energy", PET_INITIAL_ENERGY);
+  pet.food = petPrefs.getUChar("food", PET_INITIAL_FOOD);
+  pet.action = static_cast<PetActionState>(petPrefs.getUChar("action", PET_STATE_IDLE));
+  pet.sleepWakeDay = petPrefs.getInt("wakeDay", -1);
+  pet.actionStartedMs = millis();
+  pet.statTickMs = millis();
+
+  if (pet.hunger > 100) {
+    pet.hunger = PET_INITIAL_HUNGER;
+  }
+  if (pet.energy > 100) {
+    pet.energy = PET_INITIAL_ENERGY;
+  }
+  if (pet.food > PET_MAX_FOOD) {
+    pet.food = PET_MAX_FOOD;
+  }
+  if (pet.action != PET_STATE_SLEEP) {
+    pet.action = PET_STATE_IDLE;
+  }
+
   displayEnabled = petPrefs.getBool("display", true);
 }
 
 void savePetState() {
-  petPrefs.putBool("asleep", pet.asleep);
-  petPrefs.putBool("sleepWake", pet.sleepUntilMorning);
-  petPrefs.putInt("fedDay", pet.fedDay);
-  petPrefs.putInt("sleepDay", pet.sleepStartDay);
+  petPrefs.putUChar("hunger", pet.hunger);
+  petPrefs.putUChar("energy", pet.energy);
+  petPrefs.putUChar("food", pet.food);
+  petPrefs.putUChar("action", static_cast<uint8_t>(pet.action));
+  petPrefs.putInt("wakeDay", pet.sleepWakeDay);
   petPrefs.putBool("display", displayEnabled);
 }
 
@@ -585,43 +628,32 @@ bool hasConnectionAlert() {
   return WiFi.status() != WL_CONNECTED || !proxmox.valid;
 }
 
-bool isLunchWindow(const struct tm &timeInfo) {
-  const uint16_t nowMinutes = minutesSinceMidnight(timeInfo);
-  const uint16_t feedMinutes = configuredMinutes(PET_FEED_HOUR, PET_FEED_MINUTE);
-  const uint16_t afternoonWorkMinutes = configuredMinutes(PET_AFTERNOON_WORK_HOUR, PET_AFTERNOON_WORK_MINUTE);
-  return nowMinutes >= feedMinutes && nowMinutes < afternoonWorkMinutes;
+uint8_t clampPetStat(int16_t value) {
+  if (value <= 0) {
+    return 0;
+  }
+  if (value >= 100) {
+    return 100;
+  }
+  return static_cast<uint8_t>(value);
 }
 
-bool hasMealPrompt(const struct tm &timeInfo) {
-  return isLunchWindow(timeInfo) && pet.fedDay != dayKey(timeInfo);
+uint8_t clampFood(int16_t value) {
+  if (value <= 0) {
+    return 0;
+  }
+  if (value >= PET_MAX_FOOD) {
+    return PET_MAX_FOOD;
+  }
+  return static_cast<uint8_t>(value);
 }
 
-PetBaseMode currentPetBaseMode() {
-  struct tm timeInfo;
-  if (!readLocalTime(timeInfo)) {
-    return pet.asleep ? PET_BASE_SLEEP : PET_BASE_WORK;
-  }
-
-  const uint16_t nowMinutes = minutesSinceMidnight(timeInfo);
-  const uint16_t chillMinutes = configuredMinutes(PET_CHILL_HOUR, PET_CHILL_MINUTE);
-
-  if (pet.asleep || isSleepWindow(nowMinutes)) {
-    return PET_BASE_SLEEP;
-  }
-
-  if (hasMealPrompt(timeInfo)) {
-    return PET_BASE_HUNGRY;
-  }
-
-  if (nowMinutes >= chillMinutes) {
-    return PET_BASE_CHILL;
-  }
-
-  return PET_BASE_WORK;
+bool isPetBusy() {
+  return pet.action == PET_STATE_HUNT || pet.action == PET_STATE_EAT;
 }
 
-bool hasMealAlert() {
-  return currentPetBaseMode() == PET_BASE_HUNGRY;
+bool isPetSleeping() {
+  return pet.action == PET_STATE_SLEEP;
 }
 
 PetNoticeType activePetNotice() {
@@ -637,8 +669,161 @@ void startPetNotice(PetNoticeType notice) {
   pet.noticeUntilMs = millis() + PET_NOTICE_MS;
 }
 
-void updatePetRoutine() {
+int32_t nextWakeDay(const struct tm &timeInfo) {
+  const int32_t today = dayKey(timeInfo);
+  const uint16_t nowMinutes = minutesSinceMidnight(timeInfo);
+  const uint16_t wakeMinutes = configuredMinutes(PET_WAKE_HOUR, PET_WAKE_MINUTE);
+  return nowMinutes < wakeMinutes ? today : today + 1;
+}
+
+uint8_t rollHuntFood() {
+  const long roll = random(100);
+  if (roll < 50) {
+    return 0;
+  }
+  if (roll < 80) {
+    return 1;
+  }
+  if (roll < 95) {
+    return 2;
+  }
+  return 4;
+}
+
+void finishPetAction() {
+  switch (pet.action) {
+  case PET_STATE_HUNT: {
+    const uint8_t foundFood = rollHuntFood();
+    const uint8_t hungerCost = random(PET_HUNT_MAX_HUNGER_COST + 1);
+    pet.energy = clampPetStat(static_cast<int16_t>(pet.energy) - PET_HUNT_ENERGY_COST);
+    pet.hunger = clampPetStat(static_cast<int16_t>(pet.hunger) - hungerCost);
+    pet.food = clampFood(static_cast<int16_t>(pet.food) + foundFood);
+    pet.action = PET_STATE_IDLE;
+    break;
+  }
+  case PET_STATE_EAT: {
+    const uint8_t energyCost = random(PET_EAT_MAX_ENERGY_COST + 1);
+    pet.food = clampFood(static_cast<int16_t>(pet.food) - 1);
+    pet.hunger = clampPetStat(static_cast<int16_t>(pet.hunger) + PET_EAT_HUNGER_GAIN);
+    pet.energy = clampPetStat(static_cast<int16_t>(pet.energy) - energyCost);
+    pet.action = PET_STATE_IDLE;
+    break;
+  }
+  default:
+    break;
+  }
+
+  pet.actionStartedMs = millis();
+  pet.statTickMs = millis();
+  savePetState();
+}
+
+void wakePet() {
+  pet.action = PET_STATE_IDLE;
+  pet.sleepWakeDay = -1;
+  pet.actionStartedMs = millis();
+  pet.statTickMs = millis();
+  savePetState();
+}
+
+bool startPetAction(PetActionState action) {
+  if (isPetBusy() || (isPetSleeping() && action != PET_STATE_IDLE)) {
+    startPetNotice(PET_NOTICE_BUSY);
+    return false;
+  }
+
+  switch (action) {
+  case PET_STATE_HUNT:
+    if (pet.energy < PET_HUNT_MIN_ENERGY) {
+      startPetNotice(PET_NOTICE_NO_ENERGY);
+      return false;
+    }
+    break;
+  case PET_STATE_EAT:
+    if (pet.food == 0) {
+      startPetNotice(PET_NOTICE_NO_FOOD);
+      return false;
+    }
+    if (pet.hunger >= 100) {
+      startPetNotice(PET_NOTICE_NO_HUNGRY);
+      return false;
+    }
+    break;
+  case PET_STATE_SLEEP: {
+    struct tm timeInfo;
+    pet.sleepWakeDay = readLocalTime(timeInfo) ? nextWakeDay(timeInfo) : -1;
+    break;
+  }
+  default:
+    break;
+  }
+
+  pet.action = action;
+  pet.actionStartedMs = millis();
+  pet.statTickMs = millis();
+  savePetState();
+  return true;
+}
+
+void applyHourlyPetTick() {
+  switch (pet.action) {
+  case PET_STATE_IDLE:
+    pet.hunger = clampPetStat(static_cast<int16_t>(pet.hunger) - PET_IDLE_HUNGER_LOSS_PER_HOUR);
+    break;
+  case PET_STATE_SLEEP:
+    pet.energy = clampPetStat(static_cast<int16_t>(pet.energy) + PET_SLEEP_ENERGY_GAIN_PER_HOUR);
+    pet.hunger = clampPetStat(static_cast<int16_t>(pet.hunger) - PET_SLEEP_HUNGER_LOSS_PER_HOUR);
+    break;
+  default:
+    break;
+  }
+}
+
+bool shouldAutoWake() {
+  if (!isPetSleeping() || pet.sleepWakeDay < 0) {
+    return false;
+  }
+
+  struct tm timeInfo;
+  if (!readLocalTime(timeInfo)) {
+    return false;
+  }
+
+  const uint16_t wakeMinutes = configuredMinutes(PET_WAKE_HOUR, PET_WAKE_MINUTE);
+  return dayKey(timeInfo) >= pet.sleepWakeDay && minutesSinceMidnight(timeInfo) >= wakeMinutes;
+}
+
+void updatePetEngine() {
   bool changed = false;
+  const uint32_t now = millis();
+
+  if (pet.action == PET_STATE_HUNT && now - pet.actionStartedMs >= PET_HUNT_DURATION_MS) {
+    finishPetAction();
+    return;
+  }
+
+  if (pet.action == PET_STATE_EAT && now - pet.actionStartedMs >= PET_EAT_DURATION_MS) {
+    finishPetAction();
+    return;
+  }
+
+  while (now - pet.statTickMs >= PET_STAT_TICK_MS) {
+    pet.statTickMs += PET_STAT_TICK_MS;
+    applyHourlyPetTick();
+    changed = true;
+  }
+
+  if (shouldAutoWake()) {
+    wakePet();
+    return;
+  }
+
+  if (changed) {
+    savePetState();
+  }
+}
+
+void updatePetRoutine() {
 
   if (weather.valid && !isnan(weather.temperature)) {
     if (!pet.hotLatched && weather.temperature >= PET_HOT_ALERT_C) {
@@ -655,33 +840,7 @@ void updatePetRoutine() {
   }
   pet.connectionAlertLatched = connectionAlert;
 
-  struct tm timeInfo;
-  if (readLocalTime(timeInfo)) {
-    const int32_t today = dayKey(timeInfo);
-    const uint16_t nowMinutes = minutesSinceMidnight(timeInfo);
-    const bool sleepWindow = isSleepWindow(nowMinutes);
-
-    if (sleepWindow && !pet.asleep) {
-      pet.asleep = true;
-      pet.sleepUntilMorning = false;
-      pet.sleepStartDay = today;
-      changed = true;
-    } else if (!sleepWindow && pet.asleep) {
-      const uint16_t wakeMinutes = configuredMinutes(PET_WAKE_HOUR, PET_WAKE_MINUTE);
-      const bool morningReached = nowMinutes >= wakeMinutes;
-      const bool sleptAcrossDay = pet.sleepStartDay < 0 || pet.sleepStartDay != today;
-
-      if (!pet.sleepUntilMorning || (morningReached && sleptAcrossDay)) {
-        pet.asleep = false;
-        pet.sleepUntilMorning = false;
-        changed = true;
-      }
-    }
-  }
-
-  if (changed) {
-    savePetState();
-  }
+  updatePetEngine();
 }
 
 void updateAlertLed() {
@@ -689,44 +848,69 @@ void updateAlertLed() {
 }
 
 const char *petMenuLabel(uint8_t index) {
+  if (isPetSleeping()) {
+    switch (index) {
+    case 0:
+      return "WAKE UP";
+    case 1:
+      return "SCREEN OFF";
+    default:
+      return "";
+    }
+  }
+
   switch (index) {
-  case PET_ACTION_FEED:
-    return "NOURRIR";
+  case PET_ACTION_HUNT:
+    return "HUNT";
+  case PET_ACTION_EAT:
+    return "EAT";
   case PET_ACTION_SLEEP:
-    return pet.asleep ? "REVEIL" : "DODO";
-  case PET_ACTION_PAGES:
-    return "PAGES";
+    return "SLEEP";
   case PET_ACTION_SCREEN_OFF:
-    return "ECRAN OFF";
+    return "SCREEN OFF";
   case PET_ACTION_BACK:
-    return "RETOUR";
+    return "BACK";
   default:
     return "";
   }
 }
 
+uint8_t petMenuActionCount() {
+  return isPetSleeping() ? 2 : PET_ACTION_COUNT;
+}
+
 void executePetAction() {
-  struct tm timeInfo;
-  const bool hasTime = readLocalTime(timeInfo);
+  if (isPetSleeping()) {
+    switch (petMenuIndex) {
+    case 0:
+      petMenuOpen = false;
+      wakePet();
+      break;
+    case 1:
+      petMenuOpen = false;
+      displayEnabled = false;
+      oled.setPowerSave(1);
+      savePetState();
+      break;
+    default:
+      petMenuOpen = false;
+      break;
+    }
+    return;
+  }
 
   switch (petMenuIndex) {
-  case PET_ACTION_FEED:
-    if (hasTime) {
-      pet.fedDay = dayKey(timeInfo);
-    }
+  case PET_ACTION_HUNT:
     petMenuOpen = false;
-    savePetState();
+    startPetAction(PET_STATE_HUNT);
+    break;
+  case PET_ACTION_EAT:
+    petMenuOpen = false;
+    startPetAction(PET_STATE_EAT);
     break;
   case PET_ACTION_SLEEP:
-    pet.asleep = !pet.asleep;
-    pet.sleepUntilMorning = pet.asleep;
-    pet.sleepStartDay = hasTime ? dayKey(timeInfo) : -1;
     petMenuOpen = false;
-    savePetState();
-    break;
-  case PET_ACTION_PAGES:
-    petMenuOpen = false;
-    currentPage = PAGE_PROXMOX;
+    startPetAction(PET_STATE_SLEEP);
     break;
   case PET_ACTION_SCREEN_OFF:
     petMenuOpen = false;
@@ -799,11 +983,12 @@ void handleButtons() {
 
   if (petMenuOpen) {
     if (leftPressed) {
-      petMenuIndex = petMenuIndex == 0 ? PET_ACTION_COUNT - 1 : petMenuIndex - 1;
+      const uint8_t actionCount = petMenuActionCount();
+      petMenuIndex = petMenuIndex == 0 ? actionCount - 1 : petMenuIndex - 1;
     }
 
     if (rightPressed) {
-      petMenuIndex = (petMenuIndex + 1) % PET_ACTION_COUNT;
+      petMenuIndex = (petMenuIndex + 1) % petMenuActionCount();
     }
 
     if (selectPressed) {
@@ -815,9 +1000,14 @@ void handleButtons() {
 
   if (selectPressed) {
     if (currentPage == PAGE_DASHBOARD) {
-      petMenuOpen = true;
-      petMenuIndex = PET_ACTION_FEED;
-      Serial.println("BTN SELECT -> pet menu");
+      if (isPetBusy()) {
+        startPetNotice(PET_NOTICE_BUSY);
+        Serial.println("BTN SELECT -> pet busy");
+      } else {
+        petMenuOpen = true;
+        petMenuIndex = 0;
+        Serial.println("BTN SELECT -> pet menu");
+      }
     } else {
       currentPage = PAGE_DASHBOARD;
       Serial.println("BTN SELECT -> home");
@@ -899,7 +1089,7 @@ void drawRightAlignedTemperature(uint8_t rightX, uint8_t baseline, float tempera
 }
 
 void drawPageIndicator(uint8_t pageIndex) {
-  oled.setFont(u8g2_font_4x6_tf);
+  oled.setFont(u8g2_font_5x8_tf);
   const String indicator = String(pageIndex + 1) + "/" + String(pageCount());
   const int indicatorWidth = oled.getStrWidth(indicator.c_str());
   oled.setCursor(128 - indicatorWidth, 6);
@@ -954,27 +1144,55 @@ void drawTinyBar(uint8_t x, uint8_t y, uint8_t width, uint8_t value) {
   oled.drawBox(x + 1, y + 1, fill, 1);
 }
 
+void drawPixelStatLabel(uint8_t x, uint8_t y, char label) {
+  const uint8_t *rows = nullptr;
+  static const uint8_t eRows[] = {0b111, 0b100, 0b111, 0b100, 0b111};
+  static const uint8_t hRows[] = {0b101, 0b101, 0b111, 0b101, 0b101};
+
+  if (label == 'E') {
+    rows = eRows;
+  } else if (label == 'H') {
+    rows = hRows;
+  }
+
+  if (rows == nullptr) {
+    return;
+  }
+
+  for (uint8_t row = 0; row < 5; row++) {
+    for (uint8_t col = 0; col < 3; col++) {
+      if ((rows[row] & (1 << (2 - col))) != 0) {
+        oled.drawPixel(x + col, y + row);
+      }
+    }
+  }
+}
+
+void drawSegmentStatBar(uint8_t x, uint8_t y, char label, uint8_t value) {
+  constexpr uint8_t labelWidth = 3;
+  constexpr uint8_t labelGap = 4;
+  constexpr uint8_t segmentWidth = 2;
+  constexpr uint8_t segmentHeight = 5;
+  constexpr uint8_t segmentGap = 1;
+  constexpr uint8_t maxSegments = 10;
+
+  drawPixelStatLabel(x, y, label);
+
+  const uint8_t clampedValue = value > 100 ? 100 : value;
+  const uint8_t filledSegments = clampedValue / 10;
+  const uint8_t barX = x + labelWidth + labelGap;
+
+  for (uint8_t segment = 0; segment < filledSegments && segment < maxSegments; segment++) {
+    const uint8_t segmentX = barX + segment * (segmentWidth + segmentGap);
+    oled.drawBox(segmentX, y, segmentWidth, segmentHeight);
+  }
+}
+
 void drawPetGauge(uint8_t x, uint8_t y, char label, uint8_t value) {
   oled.setFont(u8g2_font_4x6_tf);
   oled.setCursor(x, y + 5);
   oled.print(label);
   drawTinyBar(x + 6, y + 2, 22, value);
-}
-
-void drawSpeechBubble(const String &message) {
-  if (message.length() == 0) {
-    return;
-  }
-
-  oled.setFont(u8g2_font_5x8_tf);
-  uint8_t bubbleWidth = oled.getStrWidth(message.c_str()) + 8;
-  if (bubbleWidth > 46) {
-    bubbleWidth = 46;
-  }
-  const uint8_t x = (128 - bubbleWidth) / 2;
-  oled.drawRFrame(x, 0, bubbleWidth, 13, 2);
-  oled.setCursor(x + 4, 9);
-  oled.print(message);
 }
 
 void drawPetMenu() {
@@ -994,6 +1212,36 @@ void drawPetMenu() {
   oled.setDrawColor(1);
 }
 
+String actionRemainingLabel() {
+  uint32_t durationMs = 0;
+
+  switch (pet.action) {
+  case PET_STATE_HUNT:
+    durationMs = PET_HUNT_DURATION_MS;
+    break;
+  case PET_STATE_EAT:
+    durationMs = PET_EAT_DURATION_MS;
+    break;
+  default:
+    return "";
+  }
+
+  const uint32_t elapsedMs = millis() - pet.actionStartedMs;
+  const uint32_t remainingMs = elapsedMs >= durationMs ? 0 : durationMs - elapsedMs;
+  const uint16_t remainingMinutes = (remainingMs + 59999UL) / 60000UL;
+
+  if (remainingMinutes >= 60) {
+    const uint16_t hours = remainingMinutes / 60;
+    const uint16_t minutes = remainingMinutes % 60;
+    if (minutes == 0) {
+      return String(hours) + "H";
+    }
+    return String(hours) + "H" + String(minutes);
+  }
+
+  return String(remainingMinutes) + "M";
+}
+
 String petMessage() {
   const PetNoticeType notice = activePetNotice();
   if (notice == PET_NOTICE_NETWORK) {
@@ -1001,21 +1249,70 @@ String petMessage() {
   }
 
   if (notice == PET_NOTICE_HOT) {
-    return "CHAUD";
+    return "HOT";
   }
 
-  switch (currentPetBaseMode()) {
-  case PET_BASE_SLEEP:
-    return "ZZZ";
-  case PET_BASE_HUNGRY:
-    return "MIAM?";
-  case PET_BASE_CHILL:
-    return "CHILL";
-  case PET_BASE_WORK:
-    return "TRAVAIL";
+  if (notice == PET_NOTICE_NO_ENERGY) {
+    return "NO ENERGY";
+  }
+
+  if (notice == PET_NOTICE_NO_FOOD) {
+    return "NO FOOD";
+  }
+
+  if (notice == PET_NOTICE_NO_HUNGRY) {
+    return "NO HUNGRY";
+  }
+
+  if (notice == PET_NOTICE_BUSY) {
+    return "BUSY";
+  }
+
+  switch (pet.action) {
+  case PET_STATE_HUNT:
+    return "HUNT " + actionRemainingLabel();
+  case PET_STATE_EAT:
+    return "EAT " + actionRemainingLabel();
+  case PET_STATE_SLEEP:
+    return "SLEEP";
+  case PET_STATE_IDLE:
+    if (pet.energy == 0) {
+      return "NO ENERGY";
+    }
+    if (pet.hunger <= 20) {
+      return "STARVING";
+    }
+    if (pet.energy <= 20) {
+      return "TIRED";
+    }
+    return "";
   default:
     return "";
   }
+}
+
+String petActivityLabel() {
+  switch (pet.action) {
+  case PET_STATE_HUNT:
+    return "HUNT / " + actionRemainingLabel();
+  case PET_STATE_EAT:
+    return "EAT / " + actionRemainingLabel();
+  case PET_STATE_SLEEP:
+    return "SLEEP";
+  default:
+    return petMessage();
+  }
+}
+
+void drawRightAlignedActivity(uint8_t rightX, uint8_t baseline, const String &message) {
+  if (message.length() == 0) {
+    return;
+  }
+
+  oled.setFont(u8g2_font_4x6_tf);
+  const int textWidth = oled.getStrWidth(message.c_str());
+  oled.setCursor(rightX - textWidth + 1, baseline);
+  oled.print(message);
 }
 
 uint8_t interpolatePetX(uint8_t fromX, uint8_t toX, uint16_t elapsedMs) {
@@ -1026,10 +1323,25 @@ uint8_t interpolatePetX(uint8_t fromX, uint8_t toX, uint16_t elapsedMs) {
 PetRenderSprite currentPetSprite() {
   const uint32_t now = millis();
   const uint8_t frame = (now / PET_ANIMATION_FRAME_MS) % TAMAGOTCHI_BAT_FRAME_COUNT;
+
+  if (pet.action == PET_STATE_SLEEP) {
+    PetRenderSprite sprite;
+    sprite.x = PET_X_LEFT;
+    sprite.bitmap = tmg_bat_sleep_frames[frame];
+    return sprite;
+  }
+
+  if (pet.action == PET_STATE_EAT) {
+    PetRenderSprite sprite;
+    sprite.x = PET_X_LEFT;
+    sprite.bitmap = tmg_bat_eating_frames[frame];
+    return sprite;
+  }
+
   const uint32_t cycleMs = (PET_IDLE_MS * 2UL) + (PET_MOVE_MS * 2UL);
   const uint16_t motionMs = now % cycleMs;
   const PetNoticeType notice = activePetNotice();
-  const bool alertFace = notice == PET_NOTICE_HOT || currentPetBaseMode() == PET_BASE_HUNGRY;
+  const bool hurtFace = notice != PET_NOTICE_NONE || pet.hunger <= 20 || pet.energy <= 20;
 
   bool moving = false;
   PetRenderSprite sprite;
@@ -1048,14 +1360,12 @@ PetRenderSprite currentPetSprite() {
     sprite.x = interpolatePetX(PET_X_RIGHT, PET_X_LEFT, motionMs - ((PET_IDLE_MS * 2UL) + PET_MOVE_MS));
   }
 
-  if (notice == PET_NOTICE_NETWORK) {
-    sprite.bitmap = tmg_bat_angry_hurt_frames[frame];
-  } else if (moving && alertFace) {
-    sprite.bitmap = tmg_bat_angry_move_frames[frame];
+  if (pet.action == PET_STATE_HUNT) {
+    sprite.bitmap = moving ? tmg_bat_angry_move_frames[frame] : tmg_bat_angry_idle_frames[frame];
+  } else if (hurtFace) {
+    sprite.bitmap = tmg_bat_normal_hurt_frames[frame];
   } else if (moving) {
     sprite.bitmap = tmg_bat_normal_move_frames[frame];
-  } else if (alertFace) {
-    sprite.bitmap = tmg_bat_angry_idle_frames[frame];
   } else {
     sprite.bitmap = tmg_bat_normal_idle_frames[frame];
   }
@@ -1079,7 +1389,6 @@ void renderDashboardPage() {
   oled.print(time);
   drawRightAlignedTemperature(127, 12, weather.temperature);
 
-  drawSpeechBubble(petMessage());
   const PetRenderSprite petSprite = currentPetSprite();
   drawScaledXbm(petSprite.x,
                 PET_Y,
@@ -1090,15 +1399,9 @@ void renderDashboardPage() {
                 PET_SCALE_DEN,
                 petSprite.flipX);
 
-  const PetBaseMode baseMode = currentPetBaseMode();
-  const PetNoticeType notice = activePetNotice();
-  const uint8_t hunger = baseMode == PET_BASE_HUNGRY ? 25 : 100;
-  const uint8_t energy = notice != PET_NOTICE_NONE ? 45 : (baseMode == PET_BASE_CHILL ? 70 : 85);
-  const uint8_t sleep = baseMode == PET_BASE_SLEEP ? 100 : 55;
-
-  drawPetGauge(96, 26, 'H', hunger);
-  drawPetGauge(96, 37, 'E', energy);
-  drawPetGauge(96, 48, 'S', sleep);
+  drawRightAlignedActivity(127, 47, petActivityLabel());
+  drawSegmentStatBar(91, 52, 'E', pet.energy);
+  drawSegmentStatBar(91, 59, 'H', pet.hunger);
 
   if (petMenuOpen) {
     drawPetMenu();
@@ -1292,6 +1595,7 @@ void setup() {
   Serial.println();
   Serial.print("Boot ");
   Serial.println(FIRMWARE_VERSION);
+  randomSeed(esp_random());
 
   pinMode(USER_POT_PIN, INPUT);
   pinMode(BUTTON_LEFT_PIN, INPUT_PULLUP);

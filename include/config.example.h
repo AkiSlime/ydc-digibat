@@ -24,19 +24,26 @@
 #define PET_TIMEZONE "CET-1CEST,M3.5.0/2,M10.5.0/3"
 #define PET_NTP_SERVER_1 "pool.ntp.org"
 #define PET_NTP_SERVER_2 "time.nist.gov"
-#define PET_FEED_HOUR 12
-#define PET_FEED_MINUTE 0
-#define PET_AFTERNOON_WORK_HOUR 14
-#define PET_AFTERNOON_WORK_MINUTE 0
-#define PET_CHILL_HOUR 18
-#define PET_CHILL_MINUTE 0
-#define PET_SLEEP_HOUR 23
-#define PET_SLEEP_MINUTE 30
 #define PET_WAKE_HOUR 8
 #define PET_WAKE_MINUTE 0
 #define PET_HOT_ALERT_C 33.0f
 #define PET_HOT_CLEAR_C 32.0f
 #define PET_NOTICE_MS 3000
+#define PET_INITIAL_FOOD 1
+#define PET_INITIAL_HUNGER 50
+#define PET_INITIAL_ENERGY 50
+#define PET_MAX_FOOD 10
+#define PET_HUNT_MIN_ENERGY 10
+#define PET_HUNT_ENERGY_COST 10
+#define PET_HUNT_MAX_HUNGER_COST 10
+#define PET_EAT_HUNGER_GAIN 20
+#define PET_EAT_MAX_ENERGY_COST 5
+#define PET_IDLE_HUNGER_LOSS_PER_HOUR 2
+#define PET_SLEEP_ENERGY_GAIN_PER_HOUR 10
+#define PET_SLEEP_HUNGER_LOSS_PER_HOUR 3
+#define PET_HUNT_DURATION_MS (60UL * 60UL * 1000UL)
+#define PET_EAT_DURATION_MS (10UL * 60UL * 1000UL)
+#define PET_STAT_TICK_MS (60UL * 60UL * 1000UL)
 
 // OTA updates over Wi-Fi. Flash once over USB, then use the `nodemcu-32s-ota`
 // PlatformIO environment while the ESP32 is powered on and connected to Wi-Fi.

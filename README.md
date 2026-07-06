@@ -98,18 +98,21 @@ Cablage: une patte du bouton sur le GPIO, l'autre sur GND. Le firmware utilise `
 
 Pages disponibles:
 
-- page 1: accueil Tamagotchi avec heure, temperature, jauges et bulles d'alerte;
+- page 1: accueil Tamagotchi avec heure, temperature, action en cours et jauges energie/faim;
 - page 2: details Proxmox avec CPU, RAM, disque et uptime;
-- page 3: details reseau avec RSSI Wi-Fi, IP ESP32, age des dernieres donnees PVE/meteo et IP de la station meteo.
+- page 3: details reseau avec RSSI Wi-Fi, IP ESP32, age des dernieres donnees PVE/meteo et statut OTA.
 - pages suivantes: une page par VM ou conteneur LXC renvoye par Proxmox, avec CPU, RAM, disque et uptime.
 
 Depuis la page d'accueil, `Select` ouvre le menu:
 
-- `NOURRIR`: valide le repas du jour et eteint l'alerte repas;
-- `DODO` / `REVEIL`: active ou quitte le mode sommeil;
-- `PAGES`: va aux pages details;
-- `ECRAN OFF`: eteint l'OLED;
-- `RETOUR`: ferme le menu.
+- `HUNT`: lance une chasse d'une heure si l'energie est suffisante;
+- `EAT`: consomme une nourriture et remonte la faim;
+- `SLEEP`: met le compagnon au sommeil;
+- `SCREEN OFF`: eteint l'OLED;
+- `BACK`: ferme le menu.
+
+Pendant `HUNT` et `EAT`, le menu Tamagotchi est desactive jusqu'a la fin de
+l'action. Pendant `SLEEP`, le menu special propose `WAKE UP` et `SCREEN OFF`.
 
 Quand l'ecran est eteint, n'importe quel bouton le rallume.
 
@@ -135,10 +138,15 @@ Une resistance `220 ohms` fonctionne. Avec une LED rouge autour de `2.0V`, le co
 
 Comportement actuel:
 
-- les modes de base suivent l'heure: `TRAVAIL`, `MIAM?`, `CHILL`, puis `ZZZ`;
-- `MIAM?` s'affiche sur la plage repas, puis `NOURRIR` marque le repas comme fait;
-- si la temperature passe a `33.0 C`, une notification `CHAUD` s'affiche pendant `PET_NOTICE_MS`;
-- pendant la notification `CHAUD`, la LED rouge s'allume, puis s'eteint quand la notification est finie;
+- le compagnon demarre avec `food = 1`, `hunger = 50`, `energy = 50`;
+- en `IDLE`, la faim baisse de `2` par heure;
+- `HUNT` dure `1h`, coute `10` energie et peut rapporter `0`, `1`, `2` ou `4` nourritures;
+- `EAT` dure `10 min`, consomme `1` nourriture et remonte la faim de `20`;
+- pendant `HUNT` et `EAT`, la zone d'activite affiche l'action et le temps restant;
+- le stock de nourriture reste gere en interne mais n'est plus affiche sur l'accueil;
+- `SLEEP` remonte l'energie de `10` par heure, baisse la faim de `3` par heure et reveille automatiquement a `08:00`;
+- si la temperature passe a `33.0 C`, une notification `HOT` s'affiche pendant `PET_NOTICE_MS`;
+- pendant la notification `HOT`, la LED rouge s'allume, puis s'eteint quand la notification est finie;
 - l'alerte chaud peut se relancer apres etre repassee sous `32.0 C`;
 - une perte Wi-Fi ou bridge affiche aussi une notification temporaire `NET KO`.
 
@@ -185,19 +193,26 @@ Les horaires et seuils sont configurables dans `include/config.h`:
 
 ```cpp
 #define PET_TIMEZONE "CET-1CEST,M3.5.0/2,M10.5.0/3"
-#define PET_FEED_HOUR 12
-#define PET_FEED_MINUTE 0
-#define PET_AFTERNOON_WORK_HOUR 14
-#define PET_AFTERNOON_WORK_MINUTE 0
-#define PET_CHILL_HOUR 18
-#define PET_CHILL_MINUTE 0
-#define PET_SLEEP_HOUR 23
-#define PET_SLEEP_MINUTE 30
 #define PET_WAKE_HOUR 8
 #define PET_WAKE_MINUTE 0
 #define PET_HOT_ALERT_C 33.0f
 #define PET_HOT_CLEAR_C 32.0f
 #define PET_NOTICE_MS 3000
+#define PET_INITIAL_FOOD 1
+#define PET_INITIAL_HUNGER 50
+#define PET_INITIAL_ENERGY 50
+#define PET_MAX_FOOD 10
+#define PET_HUNT_MIN_ENERGY 10
+#define PET_HUNT_ENERGY_COST 10
+#define PET_HUNT_MAX_HUNGER_COST 10
+#define PET_EAT_HUNGER_GAIN 20
+#define PET_EAT_MAX_ENERGY_COST 5
+#define PET_IDLE_HUNGER_LOSS_PER_HOUR 2
+#define PET_SLEEP_ENERGY_GAIN_PER_HOUR 10
+#define PET_SLEEP_HUNGER_LOSS_PER_HOUR 3
+#define PET_HUNT_DURATION_MS (60UL * 60UL * 1000UL)
+#define PET_EAT_DURATION_MS (10UL * 60UL * 1000UL)
+#define PET_STAT_TICK_MS (60UL * 60UL * 1000UL)
 ```
 
 La timezone ci-dessus correspond a la France metropolitaine avec changement
