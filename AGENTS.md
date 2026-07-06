@@ -4,3 +4,4 @@
 - The user builds, uploads, and tests OTA changes locally.
 - Only run `pio`, `/Users/aki/.platformio/penv/bin/pio`, or OTA-related commands when the user explicitly asks for it.
 - For firmware edits, use static checks and summarize the expected impact; leave hardware validation to the user unless requested.
+- Do not commit or push every small modification automatically. Commit/push only when the user explicitly asks, or after a coherent multi-step task/plan is complete.

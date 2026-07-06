@@ -36,15 +36,31 @@ const uint8_t BASE_PAGE_COUNT = 3;
 #endif
 
 #ifndef PET_FEED_HOUR
-#define PET_FEED_HOUR 13
+#define PET_FEED_HOUR 12
 #endif
 
 #ifndef PET_FEED_MINUTE
 #define PET_FEED_MINUTE 0
 #endif
 
+#ifndef PET_AFTERNOON_WORK_HOUR
+#define PET_AFTERNOON_WORK_HOUR 14
+#endif
+
+#ifndef PET_AFTERNOON_WORK_MINUTE
+#define PET_AFTERNOON_WORK_MINUTE 0
+#endif
+
+#ifndef PET_CHILL_HOUR
+#define PET_CHILL_HOUR 18
+#endif
+
+#ifndef PET_CHILL_MINUTE
+#define PET_CHILL_MINUTE 0
+#endif
+
 #ifndef PET_SLEEP_HOUR
-#define PET_SLEEP_HOUR 22
+#define PET_SLEEP_HOUR 23
 #endif
 
 #ifndef PET_SLEEP_MINUTE
@@ -60,11 +76,15 @@ const uint8_t BASE_PAGE_COUNT = 3;
 #endif
 
 #ifndef PET_HOT_ALERT_C
-#define PET_HOT_ALERT_C 30.0f
+#define PET_HOT_ALERT_C 33.0f
 #endif
 
 #ifndef PET_HOT_CLEAR_C
-#define PET_HOT_CLEAR_C 29.0f
+#define PET_HOT_CLEAR_C 32.0f
+#endif
+
+#ifndef PET_NOTICE_MS
+#define PET_NOTICE_MS 3000
 #endif
 
 #ifndef OTA_HOSTNAME
@@ -138,10 +158,32 @@ enum PetMenuAction : uint8_t {
   PET_ACTION_COUNT = 5,
 };
 
+enum PetBaseMode : uint8_t {
+  PET_BASE_SLEEP = 0,
+  PET_BASE_WORK = 1,
+  PET_BASE_HUNGRY = 2,
+  PET_BASE_CHILL = 3,
+};
+
+enum PetNoticeType : uint8_t {
+  PET_NOTICE_NONE = 0,
+  PET_NOTICE_HOT = 1,
+  PET_NOTICE_NETWORK = 2,
+};
+
+struct PetRenderSprite {
+  const uint8_t *bitmap = nullptr;
+  uint8_t x = 0;
+  bool flipX = false;
+};
+
 struct PetState {
   bool asleep = false;
   bool sleepUntilMorning = false;
-  bool hotAlert = false;
+  bool hotLatched = false;
+  bool connectionAlertLatched = false;
+  PetNoticeType notice = PET_NOTICE_NONE;
+  uint32_t noticeUntilMs = 0;
   int32_t fedDay = -1;
   int32_t sleepStartDay = -1;
 };
@@ -152,6 +194,8 @@ bool petMenuOpen = false;
 uint8_t petMenuIndex = PET_ACTION_FEED;
 bool timeConfigured = false;
 bool otaConfigured = false;
+String otaUiStatus = "init";
+uint8_t otaUiProgress = 0;
 
 uint32_t lastProxmoxPollMs = 0;
 uint32_t lastWeatherPollMs = 0;
@@ -167,17 +211,16 @@ volatile bool rightButtonPending = false;
 
 const uint32_t BUTTON_LOCKOUT_MS = 120;
 const uint32_t WEATHER_NOTICE_MS = 5000;
-const uint16_t PET_ANIMATION_FRAME_MS = 120;
+const uint16_t PET_ANIMATION_FRAME_MS = 180;
+const uint16_t PET_IDLE_MS = 3500;
+const uint16_t PET_MOVE_MS = 1800;
 const uint8_t PET_RENDER_DELAY_MS = 20;
-const uint8_t PET_SCALE_NUM = 3;
-const uint8_t PET_SCALE_DEN = 2;
-const uint8_t PET_SCALED_FRAME_WIDTH = (TAMAGOTCHI_BAT_FRAME_WIDTH * PET_SCALE_NUM) / PET_SCALE_DEN;
-const uint8_t PET_SCALED_FRAME_HEIGHT = (TAMAGOTCHI_BAT_FRAME_HEIGHT * PET_SCALE_NUM) / PET_SCALE_DEN;
-const uint8_t PET_SCALED_FRAME_BYTES = ((PET_SCALED_FRAME_WIDTH + 7) / 8) * PET_SCALED_FRAME_HEIGHT;
+const uint8_t PET_SCALE_NUM = 2;
+const uint8_t PET_SCALE_DEN = 1;
+const uint8_t PET_X_LEFT = 0;
+const uint8_t PET_X_RIGHT = 24;
+const uint8_t PET_Y = 16;
 PetState pet;
-uint8_t petNormalIdleFrames[TAMAGOTCHI_BAT_FRAME_COUNT][PET_SCALED_FRAME_BYTES];
-uint8_t petAngryIdleFrames[TAMAGOTCHI_BAT_FRAME_COUNT][PET_SCALED_FRAME_BYTES];
-uint8_t petAngryHurtFrames[TAMAGOTCHI_BAT_FRAME_COUNT][PET_SCALED_FRAME_BYTES];
 
 void IRAM_ATTR onLeftButtonFall() {
   leftButtonPending = true;
@@ -466,27 +509,58 @@ void configureTimeIfNeeded() {
 
 void configureOtaIfNeeded() {
   if (otaConfigured || WiFi.status() != WL_CONNECTED) {
+    if (WiFi.status() != WL_CONNECTED) {
+      otaUiStatus = "wifi";
+    }
     return;
   }
 
+  ArduinoOTA.setPort(3232);
   ArduinoOTA.setHostname(OTA_HOSTNAME);
   ArduinoOTA.setPassword(OTA_PASSWORD);
   ArduinoOTA
       .onStart([]() {
+        otaUiStatus = "start";
+        otaUiProgress = 0;
         Serial.println("OTA start");
       })
       .onEnd([]() {
+        otaUiStatus = "done";
+        otaUiProgress = 100;
         Serial.println("OTA end");
       })
       .onProgress([](unsigned int progress, unsigned int total) {
-        Serial.printf("OTA progress: %u%%\r", (progress * 100) / total);
+        otaUiProgress = (progress * 100) / total;
+        otaUiStatus = String(otaUiProgress) + "%";
+        Serial.printf("OTA progress: %u%%\r", otaUiProgress);
       })
       .onError([](ota_error_t error) {
+        switch (error) {
+        case OTA_AUTH_ERROR:
+          otaUiStatus = "err auth";
+          break;
+        case OTA_BEGIN_ERROR:
+          otaUiStatus = "err begin";
+          break;
+        case OTA_CONNECT_ERROR:
+          otaUiStatus = "err conn";
+          break;
+        case OTA_RECEIVE_ERROR:
+          otaUiStatus = "err recv";
+          break;
+        case OTA_END_ERROR:
+          otaUiStatus = "err end";
+          break;
+        default:
+          otaUiStatus = "err";
+          break;
+        }
         Serial.printf("OTA error[%u]\n", error);
       });
 
   ArduinoOTA.begin();
   otaConfigured = true;
+  otaUiStatus = "ready";
   Serial.print("OTA ready: ");
   Serial.println(OTA_HOSTNAME);
 }
@@ -494,7 +568,6 @@ void configureOtaIfNeeded() {
 void loadPetState() {
   pet.asleep = petPrefs.getBool("asleep", false);
   pet.sleepUntilMorning = petPrefs.getBool("sleepWake", false);
-  pet.hotAlert = petPrefs.getBool("hot", false);
   pet.fedDay = petPrefs.getInt("fedDay", -1);
   pet.sleepStartDay = petPrefs.getInt("sleepDay", -1);
   displayEnabled = petPrefs.getBool("display", true);
@@ -503,7 +576,6 @@ void loadPetState() {
 void savePetState() {
   petPrefs.putBool("asleep", pet.asleep);
   petPrefs.putBool("sleepWake", pet.sleepUntilMorning);
-  petPrefs.putBool("hot", pet.hotAlert);
   petPrefs.putInt("fedDay", pet.fedDay);
   petPrefs.putInt("sleepDay", pet.sleepStartDay);
   petPrefs.putBool("display", displayEnabled);
@@ -513,28 +585,75 @@ bool hasConnectionAlert() {
   return WiFi.status() != WL_CONNECTED || !proxmox.valid;
 }
 
-bool hasMealAlert() {
+bool isLunchWindow(const struct tm &timeInfo) {
+  const uint16_t nowMinutes = minutesSinceMidnight(timeInfo);
+  const uint16_t feedMinutes = configuredMinutes(PET_FEED_HOUR, PET_FEED_MINUTE);
+  const uint16_t afternoonWorkMinutes = configuredMinutes(PET_AFTERNOON_WORK_HOUR, PET_AFTERNOON_WORK_MINUTE);
+  return nowMinutes >= feedMinutes && nowMinutes < afternoonWorkMinutes;
+}
+
+bool hasMealPrompt(const struct tm &timeInfo) {
+  return isLunchWindow(timeInfo) && pet.fedDay != dayKey(timeInfo);
+}
+
+PetBaseMode currentPetBaseMode() {
   struct tm timeInfo;
   if (!readLocalTime(timeInfo)) {
-    return false;
+    return pet.asleep ? PET_BASE_SLEEP : PET_BASE_WORK;
   }
 
-  const uint16_t feedMinutes = configuredMinutes(PET_FEED_HOUR, PET_FEED_MINUTE);
-  return minutesSinceMidnight(timeInfo) >= feedMinutes && pet.fedDay != dayKey(timeInfo);
+  const uint16_t nowMinutes = minutesSinceMidnight(timeInfo);
+  const uint16_t chillMinutes = configuredMinutes(PET_CHILL_HOUR, PET_CHILL_MINUTE);
+
+  if (pet.asleep || isSleepWindow(nowMinutes)) {
+    return PET_BASE_SLEEP;
+  }
+
+  if (hasMealPrompt(timeInfo)) {
+    return PET_BASE_HUNGRY;
+  }
+
+  if (nowMinutes >= chillMinutes) {
+    return PET_BASE_CHILL;
+  }
+
+  return PET_BASE_WORK;
+}
+
+bool hasMealAlert() {
+  return currentPetBaseMode() == PET_BASE_HUNGRY;
+}
+
+PetNoticeType activePetNotice() {
+  if (pet.notice == PET_NOTICE_NONE || static_cast<int32_t>(millis() - pet.noticeUntilMs) >= 0) {
+    return PET_NOTICE_NONE;
+  }
+
+  return pet.notice;
+}
+
+void startPetNotice(PetNoticeType notice) {
+  pet.notice = notice;
+  pet.noticeUntilMs = millis() + PET_NOTICE_MS;
 }
 
 void updatePetRoutine() {
   bool changed = false;
 
   if (weather.valid && !isnan(weather.temperature)) {
-    if (!pet.hotAlert && weather.temperature >= PET_HOT_ALERT_C) {
-      pet.hotAlert = true;
-      changed = true;
-    } else if (pet.hotAlert && weather.temperature < PET_HOT_CLEAR_C) {
-      pet.hotAlert = false;
-      changed = true;
+    if (!pet.hotLatched && weather.temperature >= PET_HOT_ALERT_C) {
+      pet.hotLatched = true;
+      startPetNotice(PET_NOTICE_HOT);
+    } else if (pet.hotLatched && weather.temperature < PET_HOT_CLEAR_C) {
+      pet.hotLatched = false;
     }
   }
+
+  const bool connectionAlert = hasConnectionAlert();
+  if (connectionAlert && !pet.connectionAlertLatched) {
+    startPetNotice(PET_NOTICE_NETWORK);
+  }
+  pet.connectionAlertLatched = connectionAlert;
 
   struct tm timeInfo;
   if (readLocalTime(timeInfo)) {
@@ -566,7 +685,7 @@ void updatePetRoutine() {
 }
 
 void updateAlertLed() {
-  digitalWrite(RED_LED_PIN, (hasMealAlert() || pet.hotAlert) ? HIGH : LOW);
+  digitalWrite(RED_LED_PIN, activePetNotice() == PET_NOTICE_HOT ? HIGH : LOW);
 }
 
 const char *petMenuLabel(uint8_t index) {
@@ -806,31 +925,26 @@ bool readXbmPixel(const uint8_t *bitmap, uint8_t width, uint8_t x, uint8_t y) {
   return (value & (1 << (x % 8))) != 0;
 }
 
-void writeXbmPixel(uint8_t *bitmap, uint8_t width, uint8_t x, uint8_t y) {
-  const uint8_t bytesPerRow = (width + 7) / 8;
-  const uint16_t byteIndex = static_cast<uint16_t>(y) * bytesPerRow + (x / 8);
-  bitmap[byteIndex] |= 1 << (x % 8);
-}
+void drawScaledXbm(uint8_t x,
+                   uint8_t y,
+                   uint8_t width,
+                   uint8_t height,
+                   const uint8_t *bitmap,
+                   uint8_t scaleNum,
+                   uint8_t scaleDen,
+                   bool flipX) {
+  const uint8_t scaledWidth = (width * scaleNum) / scaleDen;
+  const uint8_t scaledHeight = (height * scaleNum) / scaleDen;
 
-void buildScaledXbm(const uint8_t *source, uint8_t *target) {
-  memset(target, 0, PET_SCALED_FRAME_BYTES);
-
-  for (uint8_t dy = 0; dy < PET_SCALED_FRAME_HEIGHT; dy++) {
-    const uint8_t sourceY = (dy * PET_SCALE_DEN) / PET_SCALE_NUM;
-    for (uint8_t dx = 0; dx < PET_SCALED_FRAME_WIDTH; dx++) {
-      const uint8_t sourceX = (dx * PET_SCALE_DEN) / PET_SCALE_NUM;
-      if (readXbmPixel(source, TAMAGOTCHI_BAT_FRAME_WIDTH, sourceX, sourceY)) {
-        writeXbmPixel(target, PET_SCALED_FRAME_WIDTH, dx, dy);
+  for (uint8_t dy = 0; dy < scaledHeight; dy++) {
+    const uint8_t sourceY = (dy * scaleDen) / scaleNum;
+    for (uint8_t dx = 0; dx < scaledWidth; dx++) {
+      const uint8_t rawSourceX = (dx * scaleDen) / scaleNum;
+      const uint8_t sourceX = flipX ? width - 1 - rawSourceX : rawSourceX;
+      if (readXbmPixel(bitmap, width, sourceX, sourceY)) {
+        oled.drawPixel(x + dx, y + dy);
       }
     }
-  }
-}
-
-void buildScaledPetFrames() {
-  for (uint8_t frame = 0; frame < TAMAGOTCHI_BAT_FRAME_COUNT; frame++) {
-    buildScaledXbm(tmg_bat_normal_idle_frames[frame], petNormalIdleFrames[frame]);
-    buildScaledXbm(tmg_bat_angry_idle_frames[frame], petAngryIdleFrames[frame]);
-    buildScaledXbm(tmg_bat_angry_hurt_frames[frame], petAngryHurtFrames[frame]);
   }
 }
 
@@ -881,37 +995,72 @@ void drawPetMenu() {
 }
 
 String petMessage() {
-  if (hasConnectionAlert()) {
+  const PetNoticeType notice = activePetNotice();
+  if (notice == PET_NOTICE_NETWORK) {
     return "NET KO";
   }
 
-  if (pet.hotAlert) {
+  if (notice == PET_NOTICE_HOT) {
     return "CHAUD";
   }
 
-  if (hasMealAlert()) {
-    return "MIAM?";
-  }
-
-  if (pet.asleep) {
+  switch (currentPetBaseMode()) {
+  case PET_BASE_SLEEP:
     return "ZZZ";
+  case PET_BASE_HUNGRY:
+    return "MIAM?";
+  case PET_BASE_CHILL:
+    return "CHILL";
+  case PET_BASE_WORK:
+    return "TRAVAIL";
+  default:
+    return "";
   }
-
-  return "";
 }
 
-const uint8_t *currentPetFrame() {
-  const uint8_t frame = (millis() / PET_ANIMATION_FRAME_MS) % TAMAGOTCHI_BAT_FRAME_COUNT;
+uint8_t interpolatePetX(uint8_t fromX, uint8_t toX, uint16_t elapsedMs) {
+  const int16_t distance = static_cast<int16_t>(toX) - static_cast<int16_t>(fromX);
+  return fromX + (distance * elapsedMs) / PET_MOVE_MS;
+}
 
-  if (hasConnectionAlert()) {
-    return petAngryHurtFrames[frame];
+PetRenderSprite currentPetSprite() {
+  const uint32_t now = millis();
+  const uint8_t frame = (now / PET_ANIMATION_FRAME_MS) % TAMAGOTCHI_BAT_FRAME_COUNT;
+  const uint32_t cycleMs = (PET_IDLE_MS * 2UL) + (PET_MOVE_MS * 2UL);
+  const uint16_t motionMs = now % cycleMs;
+  const PetNoticeType notice = activePetNotice();
+  const bool alertFace = notice == PET_NOTICE_HOT || currentPetBaseMode() == PET_BASE_HUNGRY;
+
+  bool moving = false;
+  PetRenderSprite sprite;
+  sprite.x = PET_X_LEFT;
+
+  if (motionMs < PET_IDLE_MS) {
+    sprite.x = PET_X_LEFT;
+  } else if (motionMs < PET_IDLE_MS + PET_MOVE_MS) {
+    moving = true;
+    sprite.x = interpolatePetX(PET_X_LEFT, PET_X_RIGHT, motionMs - PET_IDLE_MS);
+  } else if (motionMs < (PET_IDLE_MS * 2UL) + PET_MOVE_MS) {
+    sprite.x = PET_X_RIGHT;
+  } else {
+    moving = true;
+    sprite.flipX = true;
+    sprite.x = interpolatePetX(PET_X_RIGHT, PET_X_LEFT, motionMs - ((PET_IDLE_MS * 2UL) + PET_MOVE_MS));
   }
 
-  if (pet.hotAlert || hasMealAlert()) {
-    return petAngryIdleFrames[frame];
+  if (notice == PET_NOTICE_NETWORK) {
+    sprite.bitmap = tmg_bat_angry_hurt_frames[frame];
+  } else if (moving && alertFace) {
+    sprite.bitmap = tmg_bat_angry_move_frames[frame];
+  } else if (moving) {
+    sprite.bitmap = tmg_bat_normal_move_frames[frame];
+  } else if (alertFace) {
+    sprite.bitmap = tmg_bat_angry_idle_frames[frame];
+  } else {
+    sprite.bitmap = tmg_bat_normal_idle_frames[frame];
   }
 
-  return petNormalIdleFrames[frame];
+  return sprite;
 }
 
 void renderDashboardPage() {
@@ -931,11 +1080,21 @@ void renderDashboardPage() {
   drawRightAlignedTemperature(127, 12, weather.temperature);
 
   drawSpeechBubble(petMessage());
-  oled.drawXBM(0, 16, PET_SCALED_FRAME_WIDTH, PET_SCALED_FRAME_HEIGHT, currentPetFrame());
+  const PetRenderSprite petSprite = currentPetSprite();
+  drawScaledXbm(petSprite.x,
+                PET_Y,
+                TAMAGOTCHI_BAT_FRAME_WIDTH,
+                TAMAGOTCHI_BAT_FRAME_HEIGHT,
+                petSprite.bitmap,
+                PET_SCALE_NUM,
+                PET_SCALE_DEN,
+                petSprite.flipX);
 
-  const uint8_t hunger = hasMealAlert() ? 25 : 100;
-  const uint8_t energy = pet.hotAlert || hasConnectionAlert() ? 45 : 85;
-  const uint8_t sleep = pet.asleep ? 100 : 55;
+  const PetBaseMode baseMode = currentPetBaseMode();
+  const PetNoticeType notice = activePetNotice();
+  const uint8_t hunger = baseMode == PET_BASE_HUNGRY ? 25 : 100;
+  const uint8_t energy = notice != PET_NOTICE_NONE ? 45 : (baseMode == PET_BASE_CHILL ? 70 : 85);
+  const uint8_t sleep = baseMode == PET_BASE_SLEEP ? 100 : 55;
 
   drawPetGauge(96, 26, 'H', hunger);
   drawPetGauge(96, 37, 'E', energy);
@@ -981,6 +1140,32 @@ void renderProxmoxPage() {
   oled.sendBuffer();
 }
 
+String otaDisplayStatus() {
+  if (WiFi.status() != WL_CONNECTED) {
+    return "OFF WIFI";
+  }
+
+  if (!otaConfigured) {
+    return "OFF INIT";
+  }
+
+  if (otaUiStatus == "ready" || otaUiStatus == "done") {
+    return "ON :3232";
+  }
+
+  if (otaUiStatus == "start") {
+    return "ON START";
+  }
+
+  if (otaUiStatus.endsWith("%")) {
+    return "ON " + otaUiStatus;
+  }
+
+  String status = otaUiStatus;
+  status.toUpperCase();
+  return status;
+}
+
 void renderNetworkPage() {
   oled.clearBuffer();
   oled.setFont(u8g2_font_6x12_tf);
@@ -1006,12 +1191,8 @@ void renderNetworkPage() {
   oled.print(formatAge(weather.lastOkMs, weather.valid));
 
   oled.setCursor(0, 64);
-  oled.print("WX IP: ");
-  if (weather.ip.length() > 0) {
-    oled.print(weather.ip);
-  } else {
-    oled.print("-");
-  }
+  oled.print("OTA: ");
+  oled.print(otaDisplayStatus());
 
   oled.sendBuffer();
 }
@@ -1120,7 +1301,6 @@ void setup() {
   digitalWrite(RED_LED_PIN, LOW);
   petPrefs.begin("pet", false);
   loadPetState();
-  buildScaledPetFrames();
 
   attachInterrupt(digitalPinToInterrupt(BUTTON_LEFT_PIN), onLeftButtonFall, FALLING);
   attachInterrupt(digitalPinToInterrupt(BUTTON_SELECT_PIN), onSelectButtonFall, FALLING);

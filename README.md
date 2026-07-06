@@ -135,10 +135,12 @@ Une resistance `220 ohms` fonctionne. Avec une LED rouge autour de `2.0V`, le co
 
 Comportement actuel:
 
-- a partir de 13:00, si le compagnon n'a pas ete nourri, la LED s'allume;
-- quand tu valides `NOURRIR`, la LED s'eteint pour l'alerte repas;
-- si la temperature est >= `30.0 C`, la LED s'allume;
-- l'alerte chaud se retire quand la temperature repasse sous `29.0 C`.
+- les modes de base suivent l'heure: `TRAVAIL`, `MIAM?`, `CHILL`, puis `ZZZ`;
+- `MIAM?` s'affiche sur la plage repas, puis `NOURRIR` marque le repas comme fait;
+- si la temperature passe a `33.0 C`, une notification `CHAUD` s'affiche pendant `PET_NOTICE_MS`;
+- pendant la notification `CHAUD`, la LED rouge s'allume, puis s'eteint quand la notification est finie;
+- l'alerte chaud peut se relancer apres etre repassee sous `32.0 C`;
+- une perte Wi-Fi ou bridge affiche aussi une notification temporaire `NET KO`.
 
 ### Potentiometre utilisateur optionnel
 
@@ -183,14 +185,19 @@ Les horaires et seuils sont configurables dans `include/config.h`:
 
 ```cpp
 #define PET_TIMEZONE "CET-1CEST,M3.5.0/2,M10.5.0/3"
-#define PET_FEED_HOUR 13
+#define PET_FEED_HOUR 12
 #define PET_FEED_MINUTE 0
-#define PET_SLEEP_HOUR 22
+#define PET_AFTERNOON_WORK_HOUR 14
+#define PET_AFTERNOON_WORK_MINUTE 0
+#define PET_CHILL_HOUR 18
+#define PET_CHILL_MINUTE 0
+#define PET_SLEEP_HOUR 23
 #define PET_SLEEP_MINUTE 30
 #define PET_WAKE_HOUR 8
 #define PET_WAKE_MINUTE 0
-#define PET_HOT_ALERT_C 30.0f
-#define PET_HOT_CLEAR_C 29.0f
+#define PET_HOT_ALERT_C 33.0f
+#define PET_HOT_CLEAR_C 32.0f
+#define PET_NOTICE_MS 3000
 ```
 
 La timezone ci-dessus correspond a la France metropolitaine avec changement
@@ -256,6 +263,23 @@ Si `admin-dashboard.local` ne resout pas sur ton reseau, remplace temporairement
 ```ini
 upload_port = 192.168.1.xx
 ```
+
+Si l'upload reste bloque sur `Sending invitation to 192.168.1.xx`, PlatformIO
+arrive a lancer l'envoi mais l'ESP32 ne repond pas encore au service OTA. Verifie
+dans cet ordre:
+
+- le firmware actuellement flashe sur l'ESP32 contient bien OTA; le tout premier
+  firmware OTA doit etre envoye en USB;
+- le moniteur serie affiche bien `OTA ready: admin-dashboard` apres la connexion
+  Wi-Fi;
+- sans USB, va sur la page `NETWORK` de l'OLED et verifie la ligne `OTA:`:
+  `ON :3232` veut dire que le service OTA ecoute, `OFF WIFI` indique que le
+  Wi-Fi n'est pas connecte, et `OFF INIT` indique que l'OTA n'est pas encore
+  initialise;
+- l'adresse IP utilisee est bien celle de l'ESP32 dashboard, pas celle du second
+  ESP32 meteo ni celle du bridge;
+- le Mac et l'ESP32 sont sur le meme reseau Wi-Fi/VLAN, sans isolation client;
+- le mot de passe `OTA_PASSWORD` du terminal correspond au firmware deja flashe.
 
 Pour une utilisation stable, reserve l'adresse IP de l'ESP32 dans ta box ou ton
 routeur.
