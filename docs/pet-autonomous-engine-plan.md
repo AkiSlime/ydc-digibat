@@ -118,36 +118,36 @@ Effets :
 Signification:
 
 - le pet part chasser;
-- l'action dure un certain temps (1h);
+- l'action dure un certain temps (20 min);
 - pendant ce temps, le pet n'est plus disponible pour une autre action;
 - à la fin, il revient en `IDLE`.
 
 Déclenchement:
 
 - manuel uniquement;
-- autorisé si `energy >= 10`;
-- coût en énergie: `10`;
+- autorisé si `energy >= 2`;
+- coût en énergie: `2`;
 - bloqué si l'énergie est trop basse.
 
 Effets attendus:
 
-- consomme `10` énergie;
-- consomme une quantité de faim random uniforme entre `0` et `10`;
+- consomme `2` énergie;
+- consomme une quantité de faim random uniforme entre `0` et `2`;
 - peut rapporter de la nourriture selon les probabilités ci-dessous.
 
 Résultat possible:
 
-- rien trouvé: `+0`, chance `50%`;
-- petite quantité de nourriture: `+1`, chance `30%`;
-- quantité moyenne: `+2`, chance `15%`;
-- grosse prise rare: `+4`, chance `5%`.
+- rien trouvé: `+0`, chance `20%`;
+- petite quantité de nourriture: `+1`, chance `48%`;
+- quantité moyenne: `+2`, chance `24%`;
+- grosse prise rare: `+4`, chance `8%`.
 
 Valeurs à décider:
 
-- durée de chasse: `1h`;
-- coût en énergie: `10`;
-- coût en faim: random uniforme `0..10`;
-- probabilités de résultat: `+0 50%`, `+1 30%`, `+2 15%`, `+4 5%`;
+- durée de chasse: `20 min`;
+- coût en énergie: `2`;
+- coût en faim: random uniforme `0..2`;
+- probabilités de résultat: `+0 20%`, `+1 48%`, `+2 24%`, `+4 8%`;
 - quantité maximale gagnée par chasse: `+4`;
 - stock maximal de nourriture: `10`.
 
@@ -158,7 +158,7 @@ Valeurs à décider:
 Signification:
 
 - le pet mange une nourriture de l'inventaire;
-- l'action dure un temps : 10 min;
+- l'action dure un temps : 3 min;
 - à la fin, il revient en `IDLE`.
 
 Déclenchement:
@@ -176,7 +176,7 @@ Effets attendus:
 
 Valeurs à décider:
 
-- durée du repas: `10 min`;
+- durée du repas: `3 min`;
 - gain de faim par nourriture: `+20`;
 - coût en énergie: random uniforme `0..5`.
 
@@ -288,11 +288,13 @@ Le menu peut proposer:
 
 ### Action en cours
 
-Le pet est occupé. Le menu est désactivé,
+Le pet est occupé. Un menu d'activité reste disponible avec `STATS`,
+`SCREEN OFF` et `BACK`.
 
-Exception:
+Exceptions:
 
-- pendant `SLEEP`, le menu spécial propose `WAKE UP` et `SCREEN OFF`.
+- pendant `HUNT`, le menu spécial propose aussi `STOP`;
+- pendant `SLEEP`, le menu spécial propose aussi `WAKE UP`.
 
 ### Épuisé
 
@@ -309,18 +311,18 @@ Le pet a `food == 0`.
 ## Règles décidées
 
 - stats initiales: `food = 1`, `hunger = 50`, `energy = 50`;
-- durée de chasse: `1h`;
-- coût énergie de chasse: `10`;
-- coût faim de chasse: random uniforme `0..10`;
-- résultats de chasse: `+0 50%`, `+1 30%`, `+2 15%`, `+4 5%`;
-- durée du repas: `10 min`;
+- durée de chasse: `20 min`;
+- coût énergie de chasse: `2`;
+- coût faim de chasse: random uniforme `0..2`;
+- résultats de chasse: `+0 20%`, `+1 48%`, `+2 24%`, `+4 8%`;
+- durée du repas: `3 min`;
 - coût énergie du repas: random uniforme `0..5`;
 - gain de faim du repas: `+20`;
 - sommeil: durée illimitée jusqu'au réveil manuel ou au réveil automatique;
 - gain énergie pendant sommeil: `+10/h`;
 - perte faim pendant sommeil: `-3/h`;
 - réveil automatique: `08:00`, peu importe l'énergie;
-- action annulable: non;
+- action annulable: `HUNT` peut etre stoppe depuis le menu d'activite;
 - temps restant affiché: dans la bulle, avec le nom de l'action et le temps restant;
 - stock maximal de nourriture: `10`;
 - langue des messages UI: anglais.

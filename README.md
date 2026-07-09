@@ -70,7 +70,7 @@ SDA22 SCK23
 SH1106 SW I2C
 ```
 
-Le firmware utilise l'I2C logiciel U8g2 pour forcer explicitement `SDA=GPIO22` et `SCK/SCL=GPIO23`.
+Le firmware initialise le bus I2C avec `SDA=GPIO22` et `SCK/SCL=GPIO23`.
 
 Si l'ecran reste noir avec ce test:
 
@@ -98,21 +98,27 @@ Cablage: une patte du bouton sur le GPIO, l'autre sur GND. Le firmware utilise `
 
 Pages disponibles:
 
-- page 1: accueil Tamagotchi avec heure, temperature, action en cours et jauges energie/faim;
+- page 1: accueil Tamagotchi avec temperature, action en cours, niveau et jauges energie/faim/nourriture;
 - page 2: details Proxmox avec CPU, RAM, disque et uptime;
 - page 3: details reseau avec RSSI Wi-Fi, IP ESP32, age des dernieres donnees PVE/meteo et statut OTA.
 - pages suivantes: une page par VM ou conteneur LXC renvoye par Proxmox, avec CPU, RAM, disque et uptime.
 
-Depuis la page d'accueil, `Select` ouvre le menu:
+Depuis la page d'accueil, `Select` ouvre le menu vertical plein ecran:
 
-- `HUNT`: lance une chasse d'une heure si l'energie est suffisante;
-- `EAT`: consomme une nourriture et remonte la faim;
+- bouton suivant: descend dans le menu;
+- bouton precedent: monte dans le menu;
+- `Select`: valide l'entree selectionnee;
+- `STATS`: affiche la fiche personnage;
 - `SLEEP`: met le compagnon au sommeil;
+- `EAT`: ouvre le choix du nombre de repas utiles;
+- `HUNT`: ouvre le choix du nombre de chasses de 20 minutes;
+- `ARENA`: ouvre le choix du nombre de runs de combats automatiques pour gagner de l'XP;
 - `SCREEN OFF`: eteint l'OLED;
 - `BACK`: ferme le menu.
 
-Pendant `HUNT` et `EAT`, le menu Tamagotchi est desactive jusqu'a la fin de
-l'action. Pendant `SLEEP`, le menu special propose `WAKE UP` et `SCREEN OFF`.
+Pendant une activite, `Select` ouvre un menu d'activite avec `STATS`,
+`SCREEN OFF` et `BACK`. Pendant `HUNT`, ce menu ajoute `STOP`. Pendant `SLEEP`,
+il ajoute `WAKE UP`.
 
 Quand l'ecran est eteint, n'importe quel bouton le rallume.
 
@@ -140,15 +146,29 @@ Comportement actuel:
 
 - le compagnon demarre avec `food = 1`, `hunger = 50`, `energy = 50`;
 - en `IDLE`, la faim baisse de `2` par heure;
-- `HUNT` dure `1h`, coute `10` energie et peut rapporter `0`, `1`, `2` ou `4` nourritures;
-- `EAT` dure `10 min`, consomme `1` nourriture et remonte la faim de `20`;
+- en `IDLE` sans alerte, le panneau d'activite affiche `chill`;
+- `HUNT` dure `20 min`, coute `2` energie, coute `0..2` faim et peut rapporter `0`, `1`, `2` ou `4` nourritures;
+- les chances de base de `HUNT` sont `+0 20%`, `+1 48%`, `+2 24%`, `+4 8%`;
+- les stats `ATK`, `DEF` et `LCK` peuvent ameliorer les resultats de chasse;
+- `EAT` dure `3 min`, consomme `1` nourriture et remonte la faim de `20`;
 - pendant `HUNT` et `EAT`, la zone d'activite affiche l'action et le temps restant;
-- le stock de nourriture reste gere en interne mais n'est plus affiche sur l'accueil;
+- `ARENA` coute `5` energie et `5` faim, resout un combat automatique toutes les `2 min`, affiche les wins en cours et se termine quand les HP du run tombent a `0`;
+- a la fin de `ARENA`, une fenetre affiche `WINS`, `XP` et `LV` jusqu'a appui sur `Select`;
+- les files `HUNT`, `EAT` et `ARENA` se lancent une action a la fois depuis un selecteur numerique;
+- la progression demarre a `LV 1`, `XP 0/10`, `HP 10`, `ATK 2`, `DEF 1`, `LCK 1`;
+- le niveau courant s'affiche au-dessus des jauges `E`, `H` et `F` sur l'accueil;
+- le stock de nourriture est affiche sur l'accueil sous forme de jauge `F`;
 - `SLEEP` remonte l'energie de `10` par heure, baisse la faim de `3` par heure et reveille automatiquement a `08:00`;
 - si la temperature passe a `33.0 C`, une notification `HOT` s'affiche pendant `PET_NOTICE_MS`;
 - pendant la notification `HOT`, la LED rouge s'allume, puis s'eteint quand la notification est finie;
+- quand `HUNT`, `EAT` ou `ARENA` se termine normalement, la LED rouge joue un court motif non bloquant;
 - l'alerte chaud peut se relancer apres etre repassee sous `32.0 C`;
 - une perte Wi-Fi ou bridge affiche aussi une notification temporaire `NET KO`.
+
+Document gameplay:
+
+- la refonte `ARENA` / progression / `HUNT` est decrite dans `docs/pet-arena-progression-refactor.md`;
+- le firmware implemente maintenant une premiere version de cette refonte.
 
 ### Potentiometre utilisateur optionnel
 
@@ -202,17 +222,29 @@ Les horaires et seuils sont configurables dans `include/config.h`:
 #define PET_INITIAL_HUNGER 50
 #define PET_INITIAL_ENERGY 50
 #define PET_MAX_FOOD 10
-#define PET_HUNT_MIN_ENERGY 10
-#define PET_HUNT_ENERGY_COST 10
-#define PET_HUNT_MAX_HUNGER_COST 10
+#define PET_HUNT_MIN_ENERGY 2
+#define PET_HUNT_ENERGY_COST 2
+#define PET_HUNT_MAX_HUNGER_COST 2
 #define PET_EAT_HUNGER_GAIN 20
 #define PET_EAT_MAX_ENERGY_COST 5
 #define PET_IDLE_HUNGER_LOSS_PER_HOUR 2
 #define PET_SLEEP_ENERGY_GAIN_PER_HOUR 10
 #define PET_SLEEP_HUNGER_LOSS_PER_HOUR 3
-#define PET_HUNT_DURATION_MS (60UL * 60UL * 1000UL)
-#define PET_EAT_DURATION_MS (10UL * 60UL * 1000UL)
+#define PET_HUNT_DURATION_MS (20UL * 60UL * 1000UL)
+#define PET_EAT_DURATION_MS (3UL * 60UL * 1000UL)
 #define PET_STAT_TICK_MS (60UL * 60UL * 1000UL)
+#define PET_INITIAL_LEVEL 1
+#define PET_INITIAL_XP 0
+#define PET_INITIAL_HP 10
+#define PET_INITIAL_ATK 2
+#define PET_INITIAL_DEF 1
+#define PET_INITIAL_LCK 1
+#define PET_MAX_LEVEL 99
+#define PET_ARENA_MIN_ENERGY 5
+#define PET_ARENA_ENERGY_COST 5
+#define PET_ARENA_HUNGER_COST 5
+#define PET_ARENA_COMBAT_INTERVAL_MS (2UL * 60UL * 1000UL)
+#define PET_ARENA_XP_PERCENT_AT_TARGET 35
 ```
 
 La timezone ci-dessus correspond a la France metropolitaine avec changement
@@ -445,9 +477,9 @@ pio device monitor
 
 Resultat attendu:
 
-- l'OLED affiche trois jauges CPU/RAM/DSK en haut;
-- l'OLED affiche l'heure, la temperature et la date complete en bas;
-- les valeurs changent doucement toutes seules.
+- l'OLED affiche l'accueil Tamagotchi avec temperature, activite, niveau et jauges `E/H/F`;
+- les pages Proxmox affichent CPU, RAM, disque et uptime;
+- les valeurs mock changent doucement toutes seules.
 
 ## Prochaine evolution recommandee
 
