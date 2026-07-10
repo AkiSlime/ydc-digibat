@@ -20,6 +20,13 @@
 #define PROXMOX_REFRESH_MS 5000
 #define WEATHER_REFRESH_MS 10000
 
+// Optional integrations. They are disabled by default for public installs.
+// Enable them from the OLED SETTINGS menu, or set these defaults to 1.
+#define DASHBOARD_WEATHER_ENABLED_DEFAULT 0
+#define DASHBOARD_PROXMOX_ENABLED_DEFAULT 0
+// Home info mode: 0 = auto, 1 = temperature, 2 = clock.
+#define DASHBOARD_HOME_INFO_MODE_DEFAULT 0
+
 // Tamagotchi routines. Times use the ESP32 local timezone configured below.
 #define PET_TIMEZONE "CET-1CEST,M3.5.0/2,M10.5.0/3"
 #define PET_NTP_SERVER_1 "pool.ntp.org"
@@ -39,7 +46,8 @@
 #define PET_EAT_HUNGER_GAIN 20
 #define PET_EAT_MAX_ENERGY_COST 5
 #define PET_IDLE_HUNGER_LOSS_PER_HOUR 2
-#define PET_SLEEP_ENERGY_GAIN_PER_HOUR 10
+#define PET_SLEEP_ENERGY_GAIN 10
+#define PET_SLEEP_ENERGY_TICK_MS (30UL * 60UL * 1000UL)
 #define PET_SLEEP_HUNGER_LOSS_PER_HOUR 3
 #define PET_HUNT_DURATION_MS (20UL * 60UL * 1000UL)
 #define PET_EAT_DURATION_MS (3UL * 60UL * 1000UL)

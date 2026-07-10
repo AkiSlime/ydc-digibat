@@ -96,8 +96,16 @@ const uint8_t BASE_PAGE_COUNT = 3;
 #define PET_IDLE_HUNGER_LOSS_PER_HOUR 2
 #endif
 
-#ifndef PET_SLEEP_ENERGY_GAIN_PER_HOUR
-#define PET_SLEEP_ENERGY_GAIN_PER_HOUR 10
+#ifndef PET_SLEEP_ENERGY_GAIN
+#ifdef PET_SLEEP_ENERGY_GAIN_PER_HOUR
+#define PET_SLEEP_ENERGY_GAIN PET_SLEEP_ENERGY_GAIN_PER_HOUR
+#else
+#define PET_SLEEP_ENERGY_GAIN 10
+#endif
+#endif
+
+#ifndef PET_SLEEP_ENERGY_TICK_MS
+#define PET_SLEEP_ENERGY_TICK_MS (30UL * 60UL * 1000UL)
 #endif
 
 #ifndef PET_SLEEP_HUNGER_LOSS_PER_HOUR
@@ -162,6 +170,26 @@ const uint8_t BASE_PAGE_COUNT = 3;
 
 #ifndef PET_ARENA_XP_PERCENT_AT_TARGET
 #define PET_ARENA_XP_PERCENT_AT_TARGET 35
+#endif
+
+#ifndef PROXMOX_METRICS_URL
+#define PROXMOX_METRICS_URL ""
+#endif
+
+#ifndef WEATHER_URL
+#define WEATHER_URL ""
+#endif
+
+#ifndef DASHBOARD_WEATHER_ENABLED_DEFAULT
+#define DASHBOARD_WEATHER_ENABLED_DEFAULT 0
+#endif
+
+#ifndef DASHBOARD_PROXMOX_ENABLED_DEFAULT
+#define DASHBOARD_PROXMOX_ENABLED_DEFAULT 0
+#endif
+
+#ifndef DASHBOARD_HOME_INFO_MODE_DEFAULT
+#define DASHBOARD_HOME_INFO_MODE_DEFAULT 0
 #endif
 
 #ifndef OTA_HOSTNAME
@@ -232,9 +260,11 @@ enum PetMenuAction : uint8_t {
   PET_ACTION_EAT = 2,
   PET_ACTION_HUNT = 3,
   PET_ACTION_ARENA = 4,
-  PET_ACTION_SCREEN_OFF = 5,
-  PET_ACTION_BACK = 6,
-  PET_ACTION_COUNT = 7,
+  PET_ACTION_SETTINGS = 5,
+  PET_ACTION_SCREEN_OFF = 6,
+  PET_ACTION_RESET = 7,
+  PET_ACTION_BACK = 8,
+  PET_ACTION_COUNT = 9,
 };
 
 enum PetMenuMode : uint8_t {
@@ -243,6 +273,8 @@ enum PetMenuMode : uint8_t {
   PET_MENU_ACTIVITY = 2,
   PET_MENU_EAT_RUNS = 3,
   PET_MENU_ARENA_RUNS = 4,
+  PET_MENU_RESET_CONFIRM = 5,
+  PET_MENU_SETTINGS = 6,
 };
 
 enum PetActionState : uint8_t {
@@ -259,9 +291,23 @@ enum PetNoticeType : uint8_t {
   PET_NOTICE_NETWORK = 2,
   PET_NOTICE_NO_ENERGY = 3,
   PET_NOTICE_NO_FOOD = 4,
-  PET_NOTICE_NO_HUNGRY = 5,
+  PET_NOTICE_FULL = 5,
   PET_NOTICE_BUSY = 6,
 };
+
+enum PetResultType : uint8_t {
+  PET_RESULT_NONE = 0,
+  PET_RESULT_HUNT = 1,
+  PET_RESULT_EAT = 2,
+};
+
+enum HomeInfoMode : uint8_t {
+  HOME_INFO_AUTO = 0,
+  HOME_INFO_TEMP = 1,
+  HOME_INFO_CLOCK = 2,
+};
+
+bool startPetAction(PetActionState action);
 
 struct PetRenderSprite {
   const uint8_t *bitmap = nullptr;
@@ -298,15 +344,28 @@ bool displayEnabled = true;
 bool petMenuOpen = false;
 bool petSheetOpen = false;
 bool arenaResultOpen = false;
+bool petResultOpen = false;
+PetResultType petResultType = PET_RESULT_NONE;
 PetMenuMode petMenuMode = PET_MENU_MAIN;
 uint8_t petMenuIndex = PET_ACTION_SHEET;
 uint8_t petSheetPage = 0;
 uint16_t arenaResultWins = 0;
 uint16_t arenaResultXp = 0;
 uint8_t arenaResultLevel = PET_INITIAL_LEVEL;
+uint8_t arenaResultRuns = 0;
+int16_t petResultFoodDelta = 0;
+int16_t petResultHungerDelta = 0;
+int16_t petResultEnergyDelta = 0;
+uint8_t petResultRuns = 0;
 uint8_t huntRunsRemaining = 0;
 uint8_t eatRunsRemaining = 0;
 uint8_t arenaRunsRemaining = 0;
+uint32_t arenaAnimationStepId = 0;
+uint8_t arenaAnimationChoice = 0;
+bool arenaAnimationChoiceReady = false;
+bool weatherEnabled = DASHBOARD_WEATHER_ENABLED_DEFAULT != 0;
+bool proxmoxEnabled = DASHBOARD_PROXMOX_ENABLED_DEFAULT != 0;
+HomeInfoMode homeInfoMode = HOME_INFO_AUTO;
 bool timeConfigured = false;
 bool otaConfigured = false;
 String otaUiStatus = "init";
@@ -330,10 +389,18 @@ volatile bool previousButtonPending = false;
 const uint32_t BUTTON_LOCKOUT_MS = 300;
 const uint32_t WEATHER_NOTICE_MS = 5000;
 const uint8_t TASK_LED_PATTERN_STEP_COUNT = 5;
-const uint16_t TASK_LED_PATTERN_MS[TASK_LED_PATTERN_STEP_COUNT] = {150, 150, 600, 150, 150};
+const uint16_t TASK_LED_FAST_MS = 500;
+const uint16_t TASK_LED_SLOW_MS = 1000;
+const uint16_t TASK_LED_PATTERN_MS[TASK_LED_PATTERN_STEP_COUNT] = {
+    TASK_LED_FAST_MS,
+    TASK_LED_FAST_MS,
+    TASK_LED_SLOW_MS,
+    TASK_LED_FAST_MS,
+    TASK_LED_FAST_MS};
 const bool TASK_LED_PATTERN_ON[TASK_LED_PATTERN_STEP_COUNT] = {true, false, true, false, true};
 const uint16_t PET_ANIMATION_FRAME_MS = 180;
 const uint16_t PET_ARENA_ATTACK_PAUSE_MS = 260;
+const uint8_t PET_ARENA_RANDOM_ANIMATION_COUNT = TAMAGOTCHI_BAT_ATTACK_COUNT + 1;
 const uint8_t PET_SHEET_PAGE_COUNT = 4;
 const uint16_t PET_IDLE_MS = 3500;
 const uint16_t PET_MOVE_MS = 1800;
@@ -677,6 +744,17 @@ void configureOtaIfNeeded() {
   Serial.println(OTA_HOSTNAME);
 }
 
+void clearProxmoxMetrics(const char *error) {
+  proxmox = ProxmoxMetrics();
+  proxmox.error = error;
+}
+
+void clearWeatherMetrics(const char *error) {
+  weather = WeatherMetrics();
+  weather.error = error;
+  weatherNoticeUntilMs = 0;
+}
+
 void loadPetState() {
   pet.hunger = petPrefs.getUChar("hunger", PET_INITIAL_HUNGER);
   pet.energy = petPrefs.getUChar("energy", PET_INITIAL_ENERGY);
@@ -727,6 +805,24 @@ void loadPetState() {
   displayEnabled = petPrefs.getBool("display", true);
 }
 
+void loadDashboardSettings() {
+  weatherEnabled = petPrefs.getBool("weatherOn", DASHBOARD_WEATHER_ENABLED_DEFAULT != 0);
+  proxmoxEnabled = petPrefs.getBool("pveOn", DASHBOARD_PROXMOX_ENABLED_DEFAULT != 0);
+
+  uint8_t savedHomeInfoMode = petPrefs.getUChar("homeInfo", DASHBOARD_HOME_INFO_MODE_DEFAULT);
+  if (savedHomeInfoMode > HOME_INFO_CLOCK) {
+    savedHomeInfoMode = HOME_INFO_AUTO;
+  }
+  homeInfoMode = static_cast<HomeInfoMode>(savedHomeInfoMode);
+
+  if (!weatherEnabled) {
+    clearWeatherMetrics("off");
+  }
+  if (!proxmoxEnabled) {
+    clearProxmoxMetrics("off");
+  }
+}
+
 void savePetState() {
   petPrefs.putUChar("hunger", pet.hunger);
   petPrefs.putUChar("energy", pet.energy);
@@ -744,8 +840,19 @@ void savePetState() {
   petPrefs.putBool("display", displayEnabled);
 }
 
+void saveDashboardSettings() {
+  petPrefs.putBool("weatherOn", weatherEnabled);
+  petPrefs.putBool("pveOn", proxmoxEnabled);
+  petPrefs.putUChar("homeInfo", static_cast<uint8_t>(homeInfoMode));
+}
+
 bool hasConnectionAlert() {
-  return WiFi.status() != WL_CONNECTED || !proxmox.valid;
+  const bool anyNetworkServiceEnabled = weatherEnabled || proxmoxEnabled;
+  if (anyNetworkServiceEnabled && WiFi.status() != WL_CONNECTED) {
+    return true;
+  }
+
+  return proxmoxEnabled && !proxmox.valid;
 }
 
 uint8_t clampPetStat(int16_t value) {
@@ -902,6 +1009,65 @@ uint8_t rollHuntHungerCost() {
   return hungerCost;
 }
 
+void resetPetActionResult(PetResultType type) {
+  petResultOpen = false;
+  petResultType = type;
+  petResultFoodDelta = 0;
+  petResultHungerDelta = 0;
+  petResultEnergyDelta = 0;
+  petResultRuns = 0;
+}
+
+void addPetActionResultDelta(uint8_t oldFood, uint8_t oldHunger, uint8_t oldEnergy) {
+  petResultFoodDelta += static_cast<int16_t>(pet.food) - static_cast<int16_t>(oldFood);
+  petResultHungerDelta += static_cast<int16_t>(pet.hunger) - static_cast<int16_t>(oldHunger);
+  petResultEnergyDelta += static_cast<int16_t>(pet.energy) - static_cast<int16_t>(oldEnergy);
+  if (petResultRuns < 255) {
+    petResultRuns++;
+  }
+}
+
+void openPetActionResult(PetResultType type) {
+  petResultType = type;
+  petResultOpen = true;
+  currentPage = PAGE_DASHBOARD;
+}
+
+void resetArenaResultSummary() {
+  arenaResultOpen = false;
+  arenaResultWins = 0;
+  arenaResultXp = 0;
+  arenaResultLevel = pet.level;
+  arenaResultRuns = 0;
+}
+
+void resetArenaAnimationChoice() {
+  arenaAnimationStepId = 0;
+  arenaAnimationChoice = 0;
+  arenaAnimationChoiceReady = false;
+}
+
+void resetPetToInitialState() {
+  const bool currentDisplayEnabled = displayEnabled;
+  pet = PetState();
+  pet.actionStartedMs = millis();
+  pet.statTickMs = millis();
+  pet.arenaRunHp = pet.hp;
+  displayEnabled = currentDisplayEnabled;
+
+  huntRunsRemaining = 0;
+  eatRunsRemaining = 0;
+  arenaRunsRemaining = 0;
+  resetPetActionResult(PET_RESULT_NONE);
+  resetArenaResultSummary();
+  resetArenaAnimationChoice();
+  taskLedPatternActive = false;
+  taskLedPatternStep = 0;
+  taskLedPatternStepStartedMs = 0;
+  digitalWrite(RED_LED_PIN, LOW);
+  savePetState();
+}
+
 uint16_t calculateArenaXp(uint16_t wins) {
   if (wins == 0) {
     return 0;
@@ -917,17 +1083,18 @@ uint16_t calculateArenaXp(uint16_t wins) {
 }
 
 void finishArenaRun() {
-  const uint16_t xpGain = calculateArenaXp(pet.arenaWins);
-  pet.arenaLast = pet.arenaWins;
-  if (pet.arenaWins > pet.arenaBest) {
-    pet.arenaBest = pet.arenaWins;
+  const uint16_t runWins = pet.arenaWins;
+  const uint16_t xpGain = calculateArenaXp(runWins);
+  pet.arenaLast = runWins;
+  if (runWins > pet.arenaBest) {
+    pet.arenaBest = runWins;
   }
   addPetXp(xpGain);
 
-  arenaResultWins = pet.arenaWins;
-  arenaResultXp = xpGain;
+  arenaResultWins += runWins;
+  arenaResultXp += xpGain;
   arenaResultLevel = pet.level;
-  arenaResultOpen = true;
+  arenaResultRuns++;
   currentPage = PAGE_DASHBOARD;
 
   pet.arenaWins = 0;
@@ -935,6 +1102,16 @@ void finishArenaRun() {
   pet.action = PET_STATE_IDLE;
   pet.actionStartedMs = millis();
   pet.statTickMs = millis();
+
+  if (arenaRunsRemaining > 0) {
+    arenaRunsRemaining--;
+    if (startPetAction(PET_STATE_ARENA)) {
+      return;
+    }
+    arenaRunsRemaining = 0;
+  }
+
+  arenaResultOpen = true;
   startTaskCompleteLedPattern();
   savePetState();
 }
@@ -963,11 +1140,15 @@ void finishPetAction() {
 
   switch (pet.action) {
   case PET_STATE_HUNT: {
+    const uint8_t oldFood = pet.food;
+    const uint8_t oldHunger = pet.hunger;
+    const uint8_t oldEnergy = pet.energy;
     const uint8_t foundFood = rollHuntFood();
     const uint8_t hungerCost = rollHuntHungerCost();
     pet.energy = clampPetStat(static_cast<int16_t>(pet.energy) - PET_HUNT_ENERGY_COST);
     pet.hunger = clampPetStat(static_cast<int16_t>(pet.hunger) - hungerCost);
     pet.food = clampFood(static_cast<int16_t>(pet.food) + foundFood);
+    addPetActionResultDelta(oldFood, oldHunger, oldEnergy);
     if (huntRunsRemaining > 0 && pet.energy >= PET_HUNT_MIN_ENERGY) {
       huntRunsRemaining--;
       pet.action = PET_STATE_HUNT;
@@ -978,14 +1159,19 @@ void finishPetAction() {
       huntRunsRemaining = 0;
       pet.action = PET_STATE_IDLE;
       completedTask = true;
+      openPetActionResult(PET_RESULT_HUNT);
     }
     break;
   }
   case PET_STATE_EAT: {
+    const uint8_t oldFood = pet.food;
+    const uint8_t oldHunger = pet.hunger;
+    const uint8_t oldEnergy = pet.energy;
     const uint8_t energyCost = random(PET_EAT_MAX_ENERGY_COST + 1);
     pet.food = clampFood(static_cast<int16_t>(pet.food) - 1);
     pet.hunger = clampPetStat(static_cast<int16_t>(pet.hunger) + PET_EAT_HUNGER_GAIN);
     pet.energy = clampPetStat(static_cast<int16_t>(pet.energy) - energyCost);
+    addPetActionResultDelta(oldFood, oldHunger, oldEnergy);
     if (eatRunsRemaining > 0 && pet.food > 0 && pet.hunger < 100) {
       eatRunsRemaining--;
       pet.action = PET_STATE_EAT;
@@ -993,6 +1179,7 @@ void finishPetAction() {
       eatRunsRemaining = 0;
       pet.action = PET_STATE_IDLE;
       completedTask = true;
+      openPetActionResult(PET_RESULT_EAT);
     }
     break;
   }
@@ -1043,6 +1230,7 @@ bool startPetAction(PetActionState action) {
       startPetNotice(PET_NOTICE_NO_ENERGY);
       return false;
     }
+    resetPetActionResult(PET_RESULT_HUNT);
     break;
   case PET_STATE_ARENA:
     if (pet.energy < PET_ARENA_MIN_ENERGY) {
@@ -1053,6 +1241,7 @@ bool startPetAction(PetActionState action) {
     pet.hunger = clampPetStat(static_cast<int16_t>(pet.hunger) - PET_ARENA_HUNGER_COST);
     pet.arenaWins = 0;
     pet.arenaRunHp = pet.hp;
+    resetArenaAnimationChoice();
     break;
   case PET_STATE_EAT:
     if (pet.food == 0) {
@@ -1060,9 +1249,10 @@ bool startPetAction(PetActionState action) {
       return false;
     }
     if (pet.hunger >= 100) {
-      startPetNotice(PET_NOTICE_NO_HUNGRY);
+      startPetNotice(PET_NOTICE_FULL);
       return false;
     }
+    resetPetActionResult(PET_RESULT_EAT);
     break;
   case PET_STATE_SLEEP: {
     struct tm timeInfo;
@@ -1086,12 +1276,18 @@ void applyHourlyPetTick() {
     pet.hunger = clampPetStat(static_cast<int16_t>(pet.hunger) - PET_IDLE_HUNGER_LOSS_PER_HOUR);
     break;
   case PET_STATE_SLEEP:
-    pet.energy = clampPetStat(static_cast<int16_t>(pet.energy) + PET_SLEEP_ENERGY_GAIN_PER_HOUR);
     pet.hunger = clampPetStat(static_cast<int16_t>(pet.hunger) - PET_SLEEP_HUNGER_LOSS_PER_HOUR);
     break;
   default:
     break;
   }
+}
+
+void applySleepEnergyTick() {
+  if (pet.energy >= 100) {
+    return;
+  }
+  pet.energy = clampPetStat(static_cast<int16_t>(pet.energy) + PET_SLEEP_ENERGY_GAIN);
 }
 
 bool shouldAutoWake() {
@@ -1130,6 +1326,12 @@ void updatePetEngine() {
       finishArenaRun();
       return;
     }
+  }
+
+  while (pet.action == PET_STATE_SLEEP && pet.energy < 100 && now - pet.actionStartedMs >= PET_SLEEP_ENERGY_TICK_MS) {
+    pet.actionStartedMs += PET_SLEEP_ENERGY_TICK_MS;
+    applySleepEnergyTick();
+    changed = true;
   }
 
   while (now - pet.statTickMs >= PET_STAT_TICK_MS) {
@@ -1264,18 +1466,8 @@ void startArenaRunQueue(uint8_t runs) {
     return;
   }
 
+  resetArenaResultSummary();
   arenaRunsRemaining = runs - 1;
-  if (!startPetAction(PET_STATE_ARENA)) {
-    arenaRunsRemaining = 0;
-  }
-}
-
-void startNextQueuedArenaRun() {
-  if (arenaRunsRemaining == 0) {
-    return;
-  }
-
-  arenaRunsRemaining--;
   if (!startPetAction(PET_STATE_ARENA)) {
     arenaRunsRemaining = 0;
   }
@@ -1315,6 +1507,37 @@ String activityMenuLabel(uint8_t index) {
   }
 
   return "";
+}
+
+String onOffLabel(bool enabled) {
+  return enabled ? "ON" : "OFF";
+}
+
+String homeInfoModeLabel() {
+  switch (homeInfoMode) {
+  case HOME_INFO_TEMP:
+    return "TEMP";
+  case HOME_INFO_CLOCK:
+    return "CLOCK";
+  case HOME_INFO_AUTO:
+  default:
+    return "AUTO";
+  }
+}
+
+String settingsMenuLabel(uint8_t index) {
+  switch (index) {
+  case 0:
+    return "WEATHER " + onOffLabel(weatherEnabled);
+  case 1:
+    return "PROXMOX " + onOffLabel(proxmoxEnabled);
+  case 2:
+    return "HOME " + homeInfoModeLabel();
+  case 3:
+    return "BACK";
+  default:
+    return "";
+  }
 }
 
 void openPetStats() {
@@ -1365,6 +1588,14 @@ String petMenuLabel(uint8_t index) {
     return arenaRunMenuLabel(index);
   }
 
+  if (petMenuMode == PET_MENU_RESET_CONFIRM) {
+    return index == 0 ? "CANCEL" : "CONFIRM";
+  }
+
+  if (petMenuMode == PET_MENU_SETTINGS) {
+    return settingsMenuLabel(index);
+  }
+
   if (isPetSleeping()) {
     switch (index) {
     case 0:
@@ -1389,8 +1620,12 @@ String petMenuLabel(uint8_t index) {
     return "ARENA";
   case PET_ACTION_SHEET:
     return "STATS";
+  case PET_ACTION_SETTINGS:
+    return "SETTINGS";
   case PET_ACTION_SCREEN_OFF:
     return "SCREEN OFF";
+  case PET_ACTION_RESET:
+    return "RESET PET";
   case PET_ACTION_BACK:
     return "BACK";
   default:
@@ -1418,7 +1653,54 @@ uint8_t petMenuActionCount() {
     return maxRuns + 1;
   }
 
+  if (petMenuMode == PET_MENU_RESET_CONFIRM) {
+    return 2;
+  }
+
+  if (petMenuMode == PET_MENU_SETTINGS) {
+    return 4;
+  }
+
   return isPetSleeping() ? 3 : PET_ACTION_COUNT;
+}
+
+void toggleWeatherEnabled() {
+  weatherEnabled = !weatherEnabled;
+  if (weatherEnabled) {
+    lastWeatherPollMs = 0;
+  } else {
+    clearWeatherMetrics("off");
+  }
+  saveDashboardSettings();
+}
+
+void toggleProxmoxEnabled() {
+  proxmoxEnabled = !proxmoxEnabled;
+  if (proxmoxEnabled) {
+    lastProxmoxPollMs = 0;
+  } else {
+    clearProxmoxMetrics("off");
+    if (currentPage >= 2) {
+      currentPage = PAGE_DASHBOARD;
+    }
+  }
+  saveDashboardSettings();
+}
+
+void cycleHomeInfoMode() {
+  switch (homeInfoMode) {
+  case HOME_INFO_AUTO:
+    homeInfoMode = HOME_INFO_TEMP;
+    break;
+  case HOME_INFO_TEMP:
+    homeInfoMode = HOME_INFO_CLOCK;
+    break;
+  case HOME_INFO_CLOCK:
+  default:
+    homeInfoMode = HOME_INFO_AUTO;
+    break;
+  }
+  saveDashboardSettings();
 }
 
 void executePetAction() {
@@ -1487,6 +1769,41 @@ void executePetAction() {
     return;
   }
 
+  if (petMenuMode == PET_MENU_RESET_CONFIRM) {
+    if (petMenuIndex == 0) {
+      petMenuMode = PET_MENU_MAIN;
+      petMenuIndex = PET_ACTION_RESET;
+      return;
+    }
+
+    resetPetToInitialState();
+    petMenuOpen = false;
+    petMenuMode = PET_MENU_MAIN;
+    petMenuIndex = PET_ACTION_SHEET;
+    currentPage = PAGE_DASHBOARD;
+    return;
+  }
+
+  if (petMenuMode == PET_MENU_SETTINGS) {
+    switch (petMenuIndex) {
+    case 0:
+      toggleWeatherEnabled();
+      break;
+    case 1:
+      toggleProxmoxEnabled();
+      break;
+    case 2:
+      cycleHomeInfoMode();
+      break;
+    case 3:
+    default:
+      petMenuMode = PET_MENU_MAIN;
+      petMenuIndex = PET_ACTION_SETTINGS;
+      break;
+    }
+    return;
+  }
+
   if (isPetSleeping()) {
     switch (petMenuIndex) {
     case 0:
@@ -1548,8 +1865,16 @@ void executePetAction() {
   case PET_ACTION_SHEET:
     openPetStats();
     break;
+  case PET_ACTION_SETTINGS:
+    petMenuMode = PET_MENU_SETTINGS;
+    petMenuIndex = 0;
+    break;
   case PET_ACTION_SCREEN_OFF:
     turnScreenOff();
+    break;
+  case PET_ACTION_RESET:
+    petMenuMode = PET_MENU_RESET_CONFIRM;
+    petMenuIndex = 0;
     break;
   case PET_ACTION_BACK:
     petMenuOpen = false;
@@ -1560,7 +1885,14 @@ void executePetAction() {
 }
 
 uint8_t pageCount() {
+  if (!proxmoxEnabled) {
+    return 2;
+  }
   return BASE_PAGE_COUNT + proxmox.guestCount;
+}
+
+uint8_t networkPageIndex() {
+  return proxmoxEnabled ? PAGE_NETWORK : 1;
 }
 
 bool consumeButtonPress(volatile bool &pending, uint32_t &lastPressMs) {
@@ -1617,7 +1949,14 @@ void handleButtons() {
   if (arenaResultOpen) {
     if (selectPressed) {
       arenaResultOpen = false;
-      startNextQueuedArenaRun();
+    }
+    return;
+  }
+
+  if (petResultOpen) {
+    if (selectPressed) {
+      petResultOpen = false;
+      petResultType = PET_RESULT_NONE;
     }
     return;
   }
@@ -1788,6 +2127,37 @@ void drawLargeRightAlignedTemperature(uint8_t rightX, uint8_t baseline, float te
   oled.drawCircle(x + width - 7, baseline - 10, 1);
 }
 
+void drawLargeRightAlignedText(uint8_t rightX, uint8_t baseline, const String &value) {
+  oled.setFont(u8g2_font_7x14B_tf);
+  const int width = oled.getStrWidth(value.c_str());
+  oled.setCursor(rightX - width + 1, baseline);
+  oled.print(value);
+}
+
+String homeClockLabel() {
+  const String clock = formatClockFromNtp();
+  return clock.length() > 0 ? clock : "--:--";
+}
+
+void drawHomeInfo(uint8_t rightX, uint8_t baseline) {
+  if (homeInfoMode == HOME_INFO_TEMP) {
+    drawLargeRightAlignedTemperature(rightX, baseline, weatherEnabled ? weather.temperature : NAN);
+    return;
+  }
+
+  if (homeInfoMode == HOME_INFO_CLOCK) {
+    drawLargeRightAlignedText(rightX, baseline, homeClockLabel());
+    return;
+  }
+
+  if (weatherEnabled && weather.valid && !isnan(weather.temperature)) {
+    drawLargeRightAlignedTemperature(rightX, baseline, weather.temperature);
+    return;
+  }
+
+  drawLargeRightAlignedText(rightX, baseline, homeClockLabel());
+}
+
 void drawPageIndicator(uint8_t pageIndex) {
   oled.setFont(u8g2_font_5x8_tf);
   const String indicator = String(pageIndex + 1) + "/" + String(pageCount());
@@ -1891,7 +2261,7 @@ void drawSegmentStatBar(uint8_t x, uint8_t y, char label, uint8_t value) {
   }
 }
 
-void drawContinuousStatBar(uint8_t x, uint8_t y, char label, uint8_t value) {
+void drawContinuousStatBar(uint8_t x, uint8_t y, char label, uint8_t value, bool blinkFill = false) {
   constexpr uint8_t labelWidth = 3;
   constexpr uint8_t labelGap = 4;
   constexpr uint8_t barWidth = 30;
@@ -1905,6 +2275,9 @@ void drawContinuousStatBar(uint8_t x, uint8_t y, char label, uint8_t value) {
   const uint8_t fillWidth = clampedValue == 0 ? 0 : (clampedValue * fillMaxWidth + 99) / 100;
 
   oled.drawFrame(barX, y, barWidth, barHeight);
+  if (blinkFill && ((millis() / 500UL) % 2UL) != 0) {
+    return;
+  }
   if (fillWidth > 0) {
     oled.drawBox(barX + 1, y + 1, fillWidth, barHeight - 2);
   }
@@ -1949,9 +2322,48 @@ void drawRunSelectorMenu() {
   oled.print(energyLabel);
 }
 
+void drawResetConfirmMenu() {
+  oled.clearBuffer();
+  oled.setFont(u8g2_font_5x8_tf);
+
+  const char *title = "RESET PET";
+  const int titleWidth = oled.getStrWidth(title);
+  oled.setCursor((128 - titleWidth) / 2, 7);
+  oled.print(title);
+
+  oled.setFont(u8g2_font_6x12_tf);
+  oled.setCursor(8, 22);
+  oled.print("DELETE PET?");
+  oled.setCursor(8, 34);
+  oled.print("RESET STATE");
+
+  for (uint8_t index = 0; index < 2; index++) {
+    const bool selected = index == petMenuIndex;
+    const uint8_t x = index == 0 ? 5 : 69;
+    const char *label = index == 0 ? "CANCEL" : "CONFIRM";
+
+    if (selected) {
+      oled.drawBox(x - 2, 48, 58, 12);
+      oled.setDrawColor(0);
+    }
+
+    oled.setCursor(x + 2, 58);
+    oled.print(label);
+
+    if (selected) {
+      oled.setDrawColor(1);
+    }
+  }
+}
+
 void drawPetMenu() {
   if (petMenuMode == PET_MENU_HUNT_RUNS || petMenuMode == PET_MENU_EAT_RUNS || petMenuMode == PET_MENU_ARENA_RUNS) {
     drawRunSelectorMenu();
+    return;
+  }
+
+  if (petMenuMode == PET_MENU_RESET_CONFIRM) {
+    drawResetConfirmMenu();
     return;
   }
 
@@ -1967,6 +2379,8 @@ void drawPetMenu() {
     title = "ARENA RUNS";
   } else if (petMenuMode == PET_MENU_ACTIVITY) {
     title = "ACTIVITY";
+  } else if (petMenuMode == PET_MENU_SETTINGS) {
+    title = "SETTINGS";
   } else if (isPetSleeping()) {
     title = "SLEEP MENU";
   }
@@ -2049,6 +2463,16 @@ String actionRemainingLabel() {
   return String(remainingMinutes) + "M";
 }
 
+String sleepEnergyRemainingLabel() {
+  if (pet.action != PET_STATE_SLEEP || pet.energy >= 100) {
+    return "";
+  }
+
+  const uint32_t elapsedMs = millis() - pet.actionStartedMs;
+  const uint32_t remainingMs = elapsedMs >= PET_SLEEP_ENERGY_TICK_MS ? 0 : PET_SLEEP_ENERGY_TICK_MS - elapsedMs;
+  return durationLabel(remainingMs);
+}
+
 uint32_t currentActionDurationMs() {
   switch (pet.action) {
   case PET_STATE_HUNT:
@@ -2078,8 +2502,8 @@ String petMessage() {
     return "NO FOOD";
   }
 
-  if (notice == PET_NOTICE_NO_HUNGRY) {
-    return "NO HUNGRY";
+  if (notice == PET_NOTICE_FULL) {
+    return "FULL";
   }
 
   if (notice == PET_NOTICE_BUSY) {
@@ -2097,6 +2521,9 @@ String petMessage() {
   case PET_STATE_EAT:
     return "EAT " + actionRemainingLabel();
   case PET_STATE_SLEEP:
+    if (pet.energy < 100) {
+      return "SLEEP " + sleepEnergyRemainingLabel();
+    }
     return "SLEEP";
   case PET_STATE_IDLE:
     if (pet.energy == 0) {
@@ -2201,7 +2628,10 @@ void drawActivityPanel(uint8_t x, uint8_t y, const String &message) {
   if (pet.action == PET_STATE_ARENA) {
     drawArenaWins(x + panelWidth + 2, y + 3);
   } else {
-    const String remaining = actionRemainingLabel();
+    String remaining = actionRemainingLabel();
+    if (pet.action == PET_STATE_SLEEP) {
+      remaining = sleepEnergyRemainingLabel();
+    }
     if (remaining.length() > 0) {
       oled.setCursor(x + panelWidth + 6, y + 11);
       oled.print(remaining);
@@ -2235,16 +2665,24 @@ PetRenderSprite currentPetSprite() {
   if (pet.action == PET_STATE_ARENA) {
     const uint16_t attackMs = TAMAGOTCHI_BAT_FRAME_COUNT * PET_ANIMATION_FRAME_MS;
     const uint16_t attackStepMs = attackMs + PET_ARENA_ATTACK_PAUSE_MS;
-    const uint16_t arenaCycleMs = attackStepMs * TAMAGOTCHI_BAT_ATTACK_COUNT;
-    const uint16_t arenaMotionMs = now % arenaCycleMs;
-    const uint8_t attack = arenaMotionMs / attackStepMs;
-    const uint16_t attackFrameMs = arenaMotionMs % attackStepMs;
+    const uint32_t currentStepId = now / attackStepMs;
+    const uint16_t attackFrameMs = now % attackStepMs;
     const uint8_t attackFrame = attackFrameMs < attackMs
                                   ? attackFrameMs / PET_ANIMATION_FRAME_MS
                                   : 0;
+    if (!arenaAnimationChoiceReady || arenaAnimationStepId != currentStepId) {
+      arenaAnimationStepId = currentStepId;
+      arenaAnimationChoice = static_cast<uint8_t>(random(PET_ARENA_RANDOM_ANIMATION_COUNT));
+      arenaAnimationChoiceReady = true;
+    }
+
     PetRenderSprite sprite;
     sprite.x = PET_X_LEFT;
-    sprite.bitmap = tmg_bat_fighting_attack_rows[attack][attackFrame];
+    if (arenaAnimationChoice < TAMAGOTCHI_BAT_ATTACK_COUNT) {
+      sprite.bitmap = tmg_bat_fighting_attack_rows[arenaAnimationChoice][attackFrame];
+    } else {
+      sprite.bitmap = tmg_bat_normal_hurt_frames[attackFrame];
+    }
     return sprite;
   }
 
@@ -2329,7 +2767,9 @@ void drawArenaResultModal() {
   oled.setCursor(25, 18);
   oled.print("ARENA END");
   oled.setCursor(24, 30);
-  oled.print("WINS ");
+  oled.print("RUNS ");
+  oled.print(arenaResultRuns);
+  oled.print(" W ");
   oled.print(arenaResultWins);
   oled.setCursor(24, 42);
   oled.print("XP +");
@@ -2337,6 +2777,44 @@ void drawArenaResultModal() {
   oled.setCursor(24, 54);
   oled.print("LV ");
   oled.print(arenaResultLevel);
+  oled.setCursor(75, 54);
+  oled.print("SELECT");
+  oled.setDrawColor(1);
+}
+
+void drawSignedDelta(int16_t value) {
+  if (value > 0) {
+    oled.print("+");
+  }
+  oled.print(value);
+}
+
+void drawPetResultModal() {
+  if (!petResultOpen || petResultType == PET_RESULT_NONE) {
+    return;
+  }
+
+  const char *title = petResultType == PET_RESULT_HUNT ? "HUNT END" : "EAT END";
+  oled.drawBox(12, 7, 104, 54);
+  oled.setDrawColor(0);
+  oled.setFont(u8g2_font_6x12_tf);
+  const int titleWidth = oled.getStrWidth(title);
+  oled.setCursor(12 + (104 - titleWidth) / 2, 18);
+  oled.print(title);
+
+  oled.setCursor(24, 30);
+  oled.print("RUNS ");
+  oled.print(petResultRuns);
+
+  oled.setCursor(24, 42);
+  oled.print("F ");
+  drawSignedDelta(petResultFoodDelta);
+  oled.print(" H ");
+  drawSignedDelta(petResultHungerDelta);
+
+  oled.setCursor(24, 54);
+  oled.print("E ");
+  drawSignedDelta(petResultEnergyDelta);
   oled.setCursor(75, 54);
   oled.print("SELECT");
   oled.setDrawColor(1);
@@ -2384,20 +2862,18 @@ void renderPetSheet() {
     oled.setCursor(0, 10);
     oled.print("BAT NEEDS");
     oled.setCursor(0, 24);
-    oled.print("E ");
+    oled.print("ENERGY ");
     oled.print(pet.energy);
     oled.print("/100");
     oled.setCursor(0, 38);
-    oled.print("H ");
+    oled.print("HUNGER ");
     oled.print(pet.hunger);
     oled.print("/100");
     oled.setCursor(0, 52);
-    oled.print("F ");
+    oled.print("FOOD ");
     oled.print(pet.food);
     oled.print("/");
     oled.print(PET_MAX_FOOD);
-    oled.setCursor(0, 64);
-    oled.print("MAX E/H 100");
   } else if (petSheetPage == 2) {
     oled.setCursor(0, 10);
     oled.print("GUIDE");
@@ -2426,7 +2902,7 @@ void renderPetSheet() {
 void renderDashboardPage() {
   oled.clearBuffer();
 
-  drawLargeRightAlignedTemperature(127, 11, weather.temperature);
+  drawHomeInfo(127, 11);
 
   const PetRenderSprite petSprite = currentPetSprite();
   drawScaledXbm(petSprite.x,
@@ -2443,14 +2919,15 @@ void renderDashboardPage() {
   oled.setCursor(91, 35);
   oled.print("LV ");
   oled.print(pet.level);
-  drawContinuousStatBar(91, 38, 'E', pet.energy);
-  drawContinuousStatBar(91, 45, 'H', pet.hunger);
+  drawContinuousStatBar(91, 38, 'E', pet.energy, pet.action == PET_STATE_SLEEP && pet.energy < 100);
+  drawContinuousStatBar(91, 45, 'H', pet.hunger, pet.action == PET_STATE_EAT);
   drawSegmentStatBar(91, 52, 'F', pet.food * 10);
 
   if (petMenuOpen) {
     drawPetMenu();
   }
 
+  drawPetResultModal();
   drawArenaResultModal();
 
   oled.sendBuffer();
@@ -2521,7 +2998,7 @@ void renderNetworkPage() {
 
   oled.setCursor(0, 10);
   oled.print("NETWORK");
-  drawPageIndicator(PAGE_NETWORK);
+  drawPageIndicator(networkPageIndex());
   oled.setFont(u8g2_font_6x12_tf);
 
   oled.setCursor(0, 24);
@@ -2535,9 +3012,9 @@ void renderNetworkPage() {
 
   oled.setCursor(0, 52);
   oled.print("PVE: ");
-  oled.print(formatAge(proxmox.lastOkMs, proxmox.valid));
+  oled.print(proxmoxEnabled ? formatAge(proxmox.lastOkMs, proxmox.valid) : "off");
   oled.print("  WX: ");
-  oled.print(formatAge(weather.lastOkMs, weather.valid));
+  oled.print(weatherEnabled ? formatAge(weather.lastOkMs, weather.valid) : "off");
 
   oled.setCursor(0, 64);
   oled.print("OTA: ");
@@ -2598,13 +3075,15 @@ void renderOled() {
     return;
   }
 
-  if (petSheetOpen) {
-    renderPetSheet();
+  if (arenaResultOpen || petResultOpen) {
+    currentPage = PAGE_DASHBOARD;
+    renderDashboardPage();
     return;
   }
 
-  if (arenaResultOpen) {
-    currentPage = PAGE_DASHBOARD;
+  if (petSheetOpen) {
+    renderPetSheet();
+    return;
   }
 
   if (currentPage >= pageCount()) {
@@ -2616,8 +3095,13 @@ void renderOled() {
     return;
   }
 
-  if (currentPage == PAGE_NETWORK) {
+  if (currentPage == networkPageIndex()) {
     renderNetworkPage();
+    return;
+  }
+
+  if (!proxmoxEnabled) {
+    renderDashboardPage();
     return;
   }
 
@@ -2660,6 +3144,7 @@ void setup() {
   digitalWrite(RED_LED_PIN, LOW);
   petPrefs.begin("pet", false);
   loadPetState();
+  loadDashboardSettings();
 
   attachInterrupt(digitalPinToInterrupt(BUTTON_LEFT_PIN), onNextButtonFall, FALLING);
   attachInterrupt(digitalPinToInterrupt(BUTTON_SELECT_PIN), onSelectButtonFall, FALLING);
@@ -2708,12 +3193,12 @@ void loop() {
 
   const uint32_t now = millis();
 
-  if (lastProxmoxPollMs == 0 || now - lastProxmoxPollMs >= PROXMOX_REFRESH_MS) {
+  if (proxmoxEnabled && (lastProxmoxPollMs == 0 || now - lastProxmoxPollMs >= PROXMOX_REFRESH_MS)) {
     lastProxmoxPollMs = now;
     pollProxmox();
   }
 
-  if (lastWeatherPollMs == 0 || now - lastWeatherPollMs >= WEATHER_REFRESH_MS) {
+  if (weatherEnabled && (lastWeatherPollMs == 0 || now - lastWeatherPollMs >= WEATHER_REFRESH_MS)) {
     lastWeatherPollMs = now;
     pollWeather();
   }

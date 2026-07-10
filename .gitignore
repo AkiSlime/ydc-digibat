@@ -4,3 +4,18 @@ include/config.h
 *.pyc
 __pycache__/
 .env
+
+# Local agent/project notes, not part of the public firmware repo.
+AGENTS.md
+MEMORY.md
+
+# Local planning and legacy documentation.
+docs/install-existing-container.md
+docs/legacy-lcd.md
+docs/pet-arena-progression-refactor.md
+docs/pet-autonomous-engine-plan.md
+docs/proxmox-lxc-setup.md
+docs/tamagotchi-plan.md
+
+# Local helper scripts not required to build or run the firmware.
+tools/

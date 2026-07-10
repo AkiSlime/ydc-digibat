@@ -1,265 +1,297 @@
-# Guide utilisateur du firmware ESP32 Dashboard
+# Your Pet Desk: DigiBat Firmware User Guide
 
-Ce firmware transforme un ESP32 avec un petit écran OLED en dashboard domestique
-et en mini compagnon type Tamagotchi.
+This firmware turns an ESP32 with a small OLED screen into a desk dashboard and
+a tiny virtual pet companion.
 
-Il sert à deux choses principales:
+It has two main roles:
 
-- afficher rapidement l'état de services locaux, comme Proxmox, le réseau et la
-  météo;
-- faire vivre une petite chauve-souris pixel-art avec de l'énergie, de la faim,
-  de la nourriture, des niveaux et des actions.
+- show quick local status information, such as Proxmox, network, and weather
+  data;
+- run DigiBat, a pixel-art bat with energy, hunger, food, levels, and actions.
 
-Le firmware continue d'afficher la page d'accueil même si le Wi-Fi, la météo ou
-le bridge Proxmox ne répondent pas. Dans ce cas, certaines informations
-deviennent indisponibles, mais le compagnon reste utilisable.
+The home page keeps working even when Wi-Fi, the weather station, or the
+Proxmox bridge is unavailable. Some dashboard information may be missing, but
+the pet remains playable.
 
-## Commandes
+## Controls
 
-Le firmware se pilote avec trois boutons:
+The firmware uses three buttons:
 
-- `Suivant`: passe à la page suivante ou descend dans un menu;
-- `Précédent`: passe à la page précédente ou remonte dans un menu;
-- `Select`: ouvre un menu, valide un choix ou ferme certains écrans.
+- `Next`: go to the next page or move down in a menu;
+- `Previous`: go to the previous page or move up in a menu;
+- `Select`: open a menu, confirm a choice, or close some screens.
 
-Quand l'écran est éteint, n'importe quel bouton le rallume.
+When the OLED is off, any button wakes it.
 
-## Pages principales
+## Main Pages
 
-### Accueil Tamagotchi
+### DigiBat Home
 
-La première page est la page principale. Elle affiche:
+The first page is the main page. It shows:
 
-- la température reçue depuis la station météo;
-- l'activité ou l'état actuel du compagnon;
-- la chauve-souris animée;
-- le niveau actuel;
-- les jauges `E`, `H` et `F`.
+- temperature or clock, depending on the selected setting;
+- the current pet activity or status;
+- the animated bat sprite;
+- the current level;
+- the `E`, `H`, and `F` gauges.
 
-Les jauges signifient:
+Gauge meanings:
 
-- `E`: énergie;
-- `H`: faim;
-- `F`: nourriture en stock.
+- `E`: energy;
+- `H`: hunger;
+- `F`: food stock.
 
-Quand tout va bien et qu'aucune action n'est en cours, l'activité affiche
+When everything is fine and no action is running, the activity panel shows
 `chill`.
 
-### Page Proxmox
+### Proxmox Page
 
-La page Proxmox affiche un résumé de la machine surveillée:
+The Proxmox page appears only when Proxmox is enabled in `SETTINGS`. It shows a
+summary of the monitored machine:
 
 - CPU;
 - RAM;
-- disque;
+- disk;
 - uptime.
 
-Ces informations viennent du bridge Proxmox configuré sur le réseau local.
+This data comes from the Proxmox bridge configured on your local network.
 
-### Page réseau
+### Network Page
 
-La page réseau affiche les informations utiles pour diagnostiquer le dashboard:
+The network page shows useful diagnostic information:
 
-- signal Wi-Fi;
-- adresse IP de l'ESP32;
-- âge des dernières données Proxmox et météo;
-- état du service OTA.
+- Wi-Fi signal;
+- ESP32 IP address;
+- age of the latest Proxmox and weather data;
+- OTA service status.
 
-Cette page est utile pour vérifier que l'ESP32 est bien connecté et prêt pour
-les mises à jour par Wi-Fi.
+This page is useful to confirm that the ESP32 is connected and ready for Wi-Fi
+updates.
 
-### Pages VM et LXC
+### VM and LXC Pages
 
-Après les pages principales, le firmware peut afficher une page par VM ou
-conteneur LXC renvoyé par Proxmox.
+When Proxmox is enabled, the firmware can display one page per VM or LXC
+container returned by the bridge.
 
-Chaque page affiche le nom, l'état, le CPU, la RAM, le disque et l'uptime de
-l'élément concerné.
+Each page shows the name, state, CPU, RAM, disk, and uptime for that guest.
 
-## Compagnon Tamagotchi
+## DigiBat
 
-Le compagnon est une chauve-souris pixel-art. Il ne choisit pas ses actions tout
-seul: le joueur observe ses stats et décide quoi faire.
+DigiBat is a pixel-art bat. It does not choose actions by itself: you watch its
+stats and decide what to do next.
 
-Ses besoins principaux sont:
+Its main needs are:
 
-- énergie: nécessaire pour chasser ou aller en arène;
-- faim: baisse avec le temps ou certaines actions;
-- nourriture: sert à manger et remonter la faim.
+- energy: required for hunting and arena runs;
+- hunger: decreases over time and during some actions;
+- food: used to eat and restore hunger.
 
-Il a aussi une progression de type RPG:
+DigiBat also has RPG-style progression:
 
-- niveau;
+- level;
 - XP;
 - HP;
 - ATK;
 - DEF;
 - LCK;
-- meilleur score d'arène;
-- titre;
-- skill débloquée.
+- best arena score;
+- title;
+- unlocked skill.
 
-Les stats de progression influencent surtout la chasse et l'arène.
+Progression stats mainly affect hunting and arena performance.
 
-## Menu Tamagotchi
+## Pet Menu
 
-Depuis l'accueil, `Select` ouvre le menu principal.
+From the home page, press `Select` to open the main menu.
 
-Le menu propose:
+The menu contains:
 
-- `STATS`: consulter la fiche du compagnon;
-- `SLEEP`: dormir pour récupérer de l'énergie;
-- `EAT`: manger pour remonter la faim;
-- `HUNT`: chasser pour obtenir de la nourriture;
-- `ARENA`: faire des combats automatiques pour gagner de l'XP;
-- `SCREEN OFF`: éteindre l'écran;
-- `BACK`: fermer le menu.
+- `STATS`: view DigiBat's character sheet;
+- `SLEEP`: recover energy;
+- `EAT`: restore hunger;
+- `HUNT`: hunt for food;
+- `ARENA`: run automatic battles to earn XP;
+- `SETTINGS`: configure optional integrations and the home display;
+- `SCREEN OFF`: turn the OLED off;
+- `RESET PET`: delete and reset the pet state after confirmation;
+- `BACK`: close the menu.
 
-Le menu est vertical. `Suivant` descend, `Précédent` remonte, `Select` valide.
+The menu is vertical. `Next` moves down, `Previous` moves up, and `Select`
+confirms the highlighted item.
 
-## Fiche STATS
+## SETTINGS
 
-`STATS` ouvre une fiche en plusieurs pages.
+`SETTINGS` makes the firmware usable on a simple setup, without a weather
+station or Proxmox server.
 
-Elle permet de voir:
+Available settings:
 
-- le niveau, l'XP et les stats de combat;
-- les besoins actuels: énergie, faim et nourriture;
-- un petit rappel des lettres `E`, `H` et `F`;
-- le titre et la skill actuelle du compagnon.
+- `WEATHER ON/OFF`: enable or disable calls to the weather station;
+- `PROXMOX ON/OFF`: enable or disable calls to the Proxmox bridge;
+- `HOME AUTO/TEMP/CLOCK`: choose what appears in the top-right corner of the home page;
+- `BACK`: return to the main menu.
 
-Dans cette vue, `Suivant` et `Précédent` changent de page. `Select` ferme la
-fiche.
+In `HOME AUTO`, the home page shows temperature when `WEATHER` is enabled and
+valid. Otherwise it shows the NTP-synced clock. If time is not available yet,
+it shows `--:--`.
+
+When `WEATHER` or `PROXMOX` is `OFF`, the firmware stops polling that service.
+This avoids slowdowns caused by local URLs that do not answer.
+
+Wi-Fi is still useful for time sync and OTA updates. DigiBat remains playable
+without Proxmox and without a weather station. The automatic 08:00 wake-up
+depends on synced time.
+
+## STATS Sheet
+
+`STATS` opens a multi-page character sheet.
+
+It shows:
+
+- level, XP, and combat stats;
+- current needs: energy, hunger, and food;
+- a quick reminder for `E`, `H`, and `F`;
+- current title and skill.
+
+In this view, `Next` and `Previous` change pages. `Select` closes the sheet.
 
 ## Actions
 
 ### HUNT
 
-`HUNT` lance une chasse.
+`HUNT` starts a hunt.
 
-Une chasse:
+A hunt:
 
-- dure 20 minutes;
-- consomme de l'énergie;
-- peut faire baisser la faim;
-- peut rapporter de la nourriture.
+- lasts 20 minutes;
+- costs energy;
+- may reduce hunger;
+- may earn food.
 
-Les résultats de base sont:
+Base results:
 
-- `+0` nourriture: 20%;
-- `+1` nourriture: 48%;
-- `+2` nourritures: 24%;
-- `+4` nourritures: 8%.
+- `+0` food: 20%;
+- `+1` food: 48%;
+- `+2` food: 24%;
+- `+4` food: 8%.
 
-Les stats `ATK`, `DEF` et `LCK` peuvent améliorer le résultat ou réduire les
-effets négatifs.
+`ATK`, `DEF`, and `LCK` can improve the result or reduce negative effects.
 
-Avant de lancer `HUNT`, le firmware affiche un sélecteur de quantité. Il permet
-de choisir combien de chasses enchaîner selon l'énergie disponible.
+Before starting `HUNT`, the firmware opens a quantity selector. It lets you
+choose how many hunts to queue based on available energy.
 
-Pendant une chasse, `Select` ouvre un menu d'activité. `STOP` permet d'arrêter
-la chasse en cours. Une chasse stoppée consomme quand même ses coûts, mais ne
-donne pas de nourriture.
+During a hunt, `Select` opens the activity menu. `STOP` cancels the current
+hunt. A stopped hunt still pays its costs, but does not earn food.
+
+At the end of one or more hunts, a `HUNT END` window shows the number of runs
+and the food, hunger, and energy changes. Press `Select` to close it.
 
 ### EAT
 
-`EAT` permet au compagnon de manger.
+`EAT` lets DigiBat eat.
 
-Un repas:
+A meal:
 
-- dure 3 minutes;
-- consomme 1 nourriture;
-- remonte la faim;
-- peut coûter un peu d'énergie.
+- lasts 3 minutes;
+- consumes 1 food;
+- restores hunger;
+- blinks the hunger gauge during the action;
+- may cost a little energy.
 
-Le firmware ne propose pas de gaspiller de nourriture inutilement: si la faim
-est déjà pleine, manger est bloqué.
+The firmware avoids wasting food: if hunger is already full, eating is blocked.
 
-Comme pour la chasse, un sélecteur permet de choisir plusieurs repas utiles si
-le stock de nourriture et la faim le permettent.
+Like hunting, eating uses a quantity selector when multiple useful meals are
+available.
+
+At the end of one or more meals, an `EAT END` window shows the number of runs
+and the food, hunger, and energy changes. Press `Select` to close it.
 
 ### SLEEP
 
-`SLEEP` met le compagnon au sommeil.
+`SLEEP` puts DigiBat to sleep.
 
-Pendant le sommeil:
+During sleep:
 
-- l'énergie remonte avec le temps;
-- la faim baisse lentement;
-- le compagnon peut se réveiller automatiquement à 08:00;
-- le joueur peut aussi le réveiller manuellement avec `WAKE UP`.
+- energy increases by 10 every 30 minutes;
+- hunger slowly decreases;
+- the remaining time before the next energy bonus is shown while energy is not full;
+- the energy gauge blinks while energy is recovering;
+- DigiBat can wake automatically at 08:00;
+- you can also wake it manually with `WAKE UP`.
 
-Le sommeil n'est pas une action chronométrée comme `HUNT` ou `EAT`. Il dure
-jusqu'au réveil manuel ou automatique.
+Sleep is not a timed action like `HUNT` or `EAT`. It lasts until manual or
+automatic wake-up.
 
 ### ARENA
 
-`ARENA` lance des combats automatiques.
+`ARENA` starts automatic battles.
 
-Un run d'arène:
+An arena run:
 
-- consomme de l'énergie et de la faim au lancement;
-- résout un combat automatique toutes les 2 minutes;
-- affiche le nombre de victoires en cours;
-- se termine quand les HP du run tombent à 0;
-- donne de l'XP selon le résultat.
+- costs energy and hunger at launch;
+- resolves one automatic fight every 2 minutes;
+- shows the current win count;
+- plays a random animation between attacks and hurt reactions;
+- ends when the run HP reaches 0;
+- grants XP based on the result.
 
-À la fin, une fenêtre affiche:
+At the end of the arena queue, a single summary window shows:
 
+- `RUNS`;
 - `WINS`;
 - `XP`;
 - `LV`.
 
-Cette fenêtre reste affichée jusqu'à ce que le joueur appuie sur `Select`.
+This window stays visible until you press `Select`.
 
-Si plusieurs runs d'arène ont été sélectionnés, le run suivant démarre après la
-fermeture du résultat précédent.
+If several arena runs were selected, they chain automatically. You only see the
+final total summary.
 
-## Alertes et messages
+## Alerts and Messages
 
-Le panneau d'activité peut afficher des messages courts:
+The activity panel can show short messages:
 
-- `NET KO`: problème Wi-Fi ou bridge Proxmox indisponible;
-- `HOT`: température au-dessus du seuil configuré;
-- `NO ENERGY`: énergie insuffisante;
-- `NO FOOD`: plus de nourriture;
-- `NO HUNGRY`: faim déjà pleine;
-- `BUSY`: une action empêche d'en lancer une autre;
-- `STARVING`: faim très basse;
-- `TIRED`: énergie basse.
+- `NET KO`: Wi-Fi issue or unavailable Proxmox bridge while the integration is enabled;
+- `HOT`: temperature above the configured threshold;
+- `NO ENERGY`: not enough energy;
+- `NO FOOD`: no food left;
+- `FULL`: hunger already full;
+- `BUSY`: another action is blocking the request;
+- `STARVING`: hunger is very low;
+- `TIRED`: energy is low.
 
-Ces messages servent à comprendre rapidement pourquoi une action est possible ou
-bloquée.
+These messages help explain why an action is available or blocked.
 
-## LED rouge
+## Red LED
 
-La LED rouge a deux rôles:
+The red LED has two roles:
 
-- signaler une alerte de chaleur avec `HOT`;
-- jouer un petit motif lumineux quand `HUNT`, `EAT` ou `ARENA` se termine
-  normalement.
+- signal a heat alert with `HOT`;
+- play a short completion pattern when `HUNT`, `EAT`, or `ARENA` finishes
+  normally.
 
-Le motif de fin de tâche ne bloque pas le firmware. Le dashboard continue de
-fonctionner pendant ce signal.
+The completion pattern is non-blocking. The dashboard continues running while
+the LED signal plays.
 
-## Mises à jour OTA
+## OTA Updates
 
-Après un premier flash USB, le firmware peut être mis à jour par Wi-Fi avec OTA.
+After the first USB flash, the firmware can be updated over Wi-Fi with OTA.
 
-La page réseau permet de vérifier si OTA est prêt:
+The network page shows whether OTA is ready:
 
-- `ON :3232`: service OTA disponible;
-- `OFF WIFI`: Wi-Fi non connecté;
-- `OFF INIT`: OTA pas encore initialisé.
+- `ON :3232`: OTA service available;
+- `OFF WIFI`: Wi-Fi not connected;
+- `OFF INIT`: OTA not initialized yet.
 
-OTA ne change pas l'utilisation quotidienne du dashboard. C'est seulement une
-façon plus pratique d'envoyer une nouvelle version du firmware.
+OTA does not change daily use. It is only a more convenient way to send a new
+firmware version.
 
-## Points importants
+## Important Notes
 
-- Le compagnon n'a pas de mort, maladie ou soin dans cette version.
-- Il ne part pas chasser, manger ou dormir tout seul.
-- Le joueur garde le contrôle des actions.
-- La nourriture est limitée par un stock maximal.
-- Les valeurs peuvent être ajustées dans la configuration du firmware.
-- Si Proxmox ou la météo ne répondent pas, l'accueil Tamagotchi reste utilisable.
+- DigiBat has no death, sickness, or care mechanic in this version.
+- It does not hunt, eat, or sleep by itself.
+- The player keeps control of all actions.
+- Food is limited by a maximum stock.
+- Values can be adjusted in the firmware configuration.
+- If Proxmox or weather does not answer, the DigiBat home page remains usable.
+- Proxmox and weather can be disabled in `SETTINGS`.

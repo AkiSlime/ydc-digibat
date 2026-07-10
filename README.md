@@ -1,48 +1,73 @@
-# Admin Dashboard ESP32
+# Your Pet Desk: DigiBat
 
-Dashboard ESP32 NodeMCU-32S / ESP-32S Kit avec un affichage OLED:
+A tiny ESP32 OLED virtual pet desk companion.
 
-- page d'accueil Tamagotchi avec une chauve-souris pixel-art animee;
-- heure, temperature, alertes repas/chaud/connexion et jauges du compagnon;
-- pages details pour Proxmox, reseau, VMs et conteneurs LXC;
-- mises a jour OTA par Wi-Fi apres le premier flash USB.
+**Your Pet Desk: DigiBat** is an ESP32 firmware for a small OLED screen. It
+turns a desk module into a pixel-art companion: a digital bat you can feed, let
+sleep, send hunting, and train in arena battles between coding sessions,
+ChatGPT chats, or Claude Code runs.
 
-Le LCD HD44780 16 pins a ete retire du firmware. L'ancien cablage est conserve dans `docs/legacy-lcd.md`.
+The project, also called **YPD**, mixes a desk dashboard with a virtual pet
+inspired by creature-training games, handheld digital pets, and always-on desk
+companions.
 
-## Recommandation d'architecture
+Main features:
 
-Ne fais pas de SSH depuis l'ESP32 vers Proxmox. C'est fragile, lourd, et ca t'oblige a embarquer des secrets sensibles dans le microcontroleur.
+- `DigiBat` desk companion with hunger, energy, food, level, XP, and stats;
+- virtual pet actions: `EAT`, `SLEEP`, `HUNT`, `ARENA`, `STATS`, and `RESET PET`;
+- 128x64 OLED display with pixel-art sprites, animations, and compact gauges;
+- optional dashboard pages for Proxmox, network, VMs, LXC containers, and local weather;
+- onboard settings to enable or disable Proxmox and the weather station;
+- Wi-Fi OTA updates after the first USB flash.
 
-La meilleure V1 est:
+For the fastest setup, start with `QUICKSTART.md`. For daily use, read
+`docs/firmware-user-guide.md`.
 
-1. Proxmox expose ses infos via son API locale avec un token limite.
-2. Un petit bridge tourne sur le LAN, idealement sur Proxmox ou une VM/LXC.
-3. L'ESP32 appelle ce bridge en HTTP et recoit un JSON simple.
-4. Le deuxieme ESP32 expose les infos meteo en HTTP JSON.
+## Licenses and Attribution
 
-Pour ce projet, PlatformIO avec le framework Arduino est le meilleur compromis. ESP-IDF est plus professionnel pour un produit final, mais ici Arduino te donne plus vite les bibliotheques stables pour OLED, Wi-Fi et HTTP. Tu pourras migrer vers ESP-IDF ensuite si tu veux ajouter FreeRTOS propre, MQTT robuste, OTA, logs structures, watchdog avance, etc.
+The bat sprites used by DigiBat are adapted from `Pixel Art Bat 1BIT` by
+`dustdfg` and are distributed under `CC BY-SA 4.0`. See
+`assets/tamagotchi/ATTRIBUTION.md` and `licenses/CC-BY-SA-4.0.txt`.
 
-## Cablage propose
+## Architecture Recommendation
 
-Le pinout vise explicitement ton modele `ESP32 NODEMCU-32S ESP-32S Kit`.
+Do not SSH from the ESP32 into Proxmox. It is fragile, heavy, and would force
+you to embed sensitive secrets in the microcontroller.
 
-Pins volontairement evitees:
+The best V1 architecture is:
 
-- GPIO6 a GPIO11: reservees a la flash interne, ne pas cabler.
-- GPIO0, GPIO2, GPIO12, GPIO15: pins de boot strapping, a eviter pour une V1 stable.
-- GPIO1 et GPIO3: port serie USB, a garder libres pour les logs et l'upload.
-- GPIO34 a GPIO39: entrees uniquement. GPIO34 est donc parfait pour lire un potentiometre, mais pas pour piloter un ecran.
+1. Proxmox exposes status through its local API with a limited token.
+2. A small bridge runs on the LAN, ideally on Proxmox itself or in a VM/LXC.
+3. The ESP32 calls that bridge over HTTP and receives simple JSON.
+4. A second ESP32 can expose weather data over HTTP JSON.
 
-Les pins utilisees par le projet sont compatibles avec ce modele:
+For this project, PlatformIO with the Arduino framework is the most practical
+choice. ESP-IDF is more professional for a polished product, but Arduino gives
+fast access to stable OLED, Wi-Fi, and HTTP libraries. A later migration to
+ESP-IDF would make sense for cleaner FreeRTOS usage, robust MQTT, structured
+logs, advanced watchdog handling, and similar production-grade features.
+
+## Suggested Wiring
+
+This pinout targets the `ESP32 NODEMCU-32S ESP-32S Kit`.
+
+Pins intentionally avoided:
+
+- GPIO6 to GPIO11: reserved for internal flash, do not wire.
+- GPIO0, GPIO2, GPIO12, GPIO15: boot strapping pins, avoid them for a stable V1.
+- GPIO1 and GPIO3: USB serial port, keep them free for logs and upload.
+- GPIO34 to GPIO39: input-only pins. GPIO34 is good for reading a potentiometer, but cannot drive a display.
+
+The pins used by the project are compatible with this board:
 
 - I2C OLED: GPIO22 SDA, GPIO23 SCL/SCK.
-- Boutons menu: GPIO25, GPIO33, GPIO32.
-- LED rouge: GPIO27.
-- Potentiometre utilisateur: GPIO34.
+- Menu buttons: GPIO25, GPIO33, GPIO32.
+- Red LED: GPIO27.
+- Optional user potentiometer: GPIO34.
 
 ### OLED I2C 1.3"
 
-La plupart des OLED 1.3" sont en SH1106 128x64.
+Most 1.3" OLED modules use a 128x64 SH1106 controller.
 
 | OLED | ESP32 |
 | --- | --- |
@@ -51,18 +76,20 @@ La plupart des OLED 1.3" sont en SH1106 128x64.
 | SDA | GPIO 22 |
 | SCL/SCK | GPIO 23 |
 
-Si ton ecran est SSD1306 au lieu de SH1106, il faudra seulement changer le constructeur U8g2 dans `src/main.cpp`.
+If your screen uses SSD1306 instead of SH1106, only the U8g2 constructor in
+`src/main.cpp` needs to change.
 
-## Test diagnostic OLED seul
+## OLED-Only Diagnostic Test
 
-Si l'OLED reste noir, teste d'abord l'ecran sans Wi-Fi et sans API:
+If the OLED stays black, first test the screen without Wi-Fi and without API
+calls:
 
 ```sh
 pio run -e oled-test --target upload
 pio device monitor
 ```
 
-Resultat attendu sur l'OLED:
+Expected OLED output:
 
 ```text
 OLED TEST
@@ -70,146 +97,167 @@ SDA22 SCK23
 SH1106 SW I2C
 ```
 
-Le firmware initialise le bus I2C avec `SDA=GPIO22` et `SCK/SCL=GPIO23`.
+The firmware initializes the I2C bus with `SDA=GPIO22` and `SCK/SCL=GPIO23`.
 
-Si l'ecran reste noir avec ce test:
+If the screen stays black with this test:
 
-- verifie que `SDA` OLED va bien sur `GPIO22`;
-- verifie que `SCK/SCL` OLED va bien sur `GPIO23`;
-- verifie `VCC -> 3V3` et `GND -> GND`;
-- teste l'autre adresse/controleur possible: certains OLED 1.3" sont `SSD1306` au lieu de `SH1106`;
-- garde en tete qu'un OLED n'a pas de retroeclairage: noir complet veut dire qu'il ne recoit pas/execute pas les commandes d'affichage.
+- check that OLED `SDA` is wired to `GPIO22`;
+- check that OLED `SCK/SCL` is wired to `GPIO23`;
+- check `VCC -> 3V3` and `GND -> GND`;
+- try the other common controller if needed: some 1.3" OLED modules use `SSD1306` instead of `SH1106`;
+- remember that OLED displays have no backlight: a fully black screen means it is not receiving or executing display commands.
 
-### Boutons menu
+### Menu Buttons
 
-Les trois boutons pilotent les pages OLED et le menu Tamagotchi:
+The three buttons control OLED pages and the pet menu:
 
-- GPIO25: page suivante;
-- GPIO32: page precedente;
-- select: ouvrir/valider le menu Tamagotchi sur la page d'accueil.
+- GPIO25: next page;
+- GPIO32: previous page;
+- select: open or confirm the pet menu on the home page.
 
-| Bouton | ESP32 |
+| Button | ESP32 |
 | --- | --- |
-| Suivant | GPIO 25 |
+| Next | GPIO 25 |
 | Select / OK | GPIO 33 |
-| Precedent | GPIO 32 |
+| Previous | GPIO 32 |
 
-Cablage: une patte du bouton sur le GPIO, l'autre sur GND. Le firmware utilise `INPUT_PULLUP`, donc un bouton appuye lit `LOW`.
+Wire each button between its GPIO and GND. The firmware uses `INPUT_PULLUP`, so
+a pressed button reads `LOW`.
 
-Pages disponibles:
+Available pages:
 
-- page 1: accueil Tamagotchi avec temperature, action en cours, niveau et jauges energie/faim/nourriture;
-- page 2: details Proxmox avec CPU, RAM, disque et uptime;
-- page 3: details reseau avec RSSI Wi-Fi, IP ESP32, age des dernieres donnees PVE/meteo et statut OTA.
-- pages suivantes: une page par VM ou conteneur LXC renvoye par Proxmox, avec CPU, RAM, disque et uptime.
+- page 1: DigiBat home with configurable temperature/clock, current action, level, and energy/hunger/food gauges;
+- page 2: network details if Proxmox is disabled, otherwise Proxmox CPU, RAM, disk, and uptime details;
+- network page: Wi-Fi RSSI, ESP32 IP, latest PVE/weather data age, and OTA state;
+- following pages when Proxmox is enabled: one page per VM or LXC container returned by Proxmox, with CPU, RAM, disk, and uptime.
 
-Depuis la page d'accueil, `Select` ouvre le menu vertical plein ecran:
+From the home page, `Select` opens the full-screen vertical menu:
 
-- bouton suivant: descend dans le menu;
-- bouton precedent: monte dans le menu;
-- `Select`: valide l'entree selectionnee;
-- `STATS`: affiche la fiche personnage;
-- `SLEEP`: met le compagnon au sommeil;
-- `EAT`: ouvre le choix du nombre de repas utiles;
-- `HUNT`: ouvre le choix du nombre de chasses de 20 minutes;
-- `ARENA`: ouvre le choix du nombre de runs de combats automatiques pour gagner de l'XP;
-- `SCREEN OFF`: eteint l'OLED;
-- `BACK`: ferme le menu.
+- next button: move down;
+- previous button: move up;
+- `Select`: confirm the selected entry;
+- `STATS`: show the character sheet;
+- `SLEEP`: put the companion to sleep;
+- `EAT`: open the useful-meal count selector;
+- `HUNT`: open the 20-minute hunt count selector;
+- `ARENA`: open the automatic battle run selector to earn XP;
+- `SETTINGS`: enable/disable optional integrations and choose temperature/clock on the home page;
+- `SCREEN OFF`: turn the OLED off;
+- `RESET PET`: open a confirmation screen before deleting and resetting the pet state;
+- `BACK`: close the menu.
 
-Pendant une activite, `Select` ouvre un menu d'activite avec `STATS`,
-`SCREEN OFF` et `BACK`. Pendant `HUNT`, ce menu ajoute `STOP`. Pendant `SLEEP`,
-il ajoute `WAKE UP`.
+During an activity, `Select` opens an activity menu with `STATS`, `SCREEN OFF`,
+and `BACK`. During `HUNT`, this menu also includes `STOP`. During `SLEEP`, it
+also includes `WAKE UP`.
 
-Quand l'ecran est eteint, n'importe quel bouton le rallume.
+When the screen is off, any button wakes it.
 
-La page d'accueil reste disponible meme si le Wi-Fi ou le bridge Proxmox est KO. Dans ce cas, la chauve-souris affiche une bulle `NET KO`. La station meteo ne bloque pas le dashboard; si elle est indisponible, la temperature affiche des tirets jusqu'au premier retour valide.
+The home page remains available even when Wi-Fi, Proxmox, or the weather
+station does not answer. The `SETTINGS` menu lets you disable `WEATHER` or
+`PROXMOX`; when disabled, the firmware stops polling that service. In
+`HOME AUTO`, the home page shows temperature when weather is enabled and valid,
+otherwise it shows NTP time, or `--:--` if time is not synced yet.
 
-### LED rouge
+Wi-Fi is mostly used for NTP time sync and OTA updates. DigiBat remains playable
+without Proxmox and without a weather station; the automatic `08:00` wake-up
+depends on correctly synced time.
 
-La LED rouge sert aux alertes simples du compagnon.
+### Red LED
 
-| LED rouge | ESP32 |
+The red LED is used for simple companion alerts.
+
+| Red LED | ESP32 |
 | --- | --- |
 | GPIO | GPIO 27 |
 | Cathode | GND |
 
-Cablage recommande:
+Recommended wiring:
 
 ```text
 GPIO27 -> resistance -> anode LED
 cathode LED -> GND
 ```
 
-Une resistance `220 ohms` fonctionne. Avec une LED rouge autour de `2.0V`, le courant sera environ `(3.3V - 2.0V) / 220 = 5.9 mA`, ce qui est raisonnable pour un GPIO ESP32. `330 ohms` marche aussi et sera un peu plus doux, environ `4 mA`.
+A `220 ohms` resistor works. With a red LED around `2.0V`, current is roughly
+`(3.3V - 2.0V) / 220 = 5.9 mA`, which is reasonable for an ESP32 GPIO.
+`330 ohms` also works and will be a little softer, around `4 mA`.
 
-Comportement actuel:
+Current behavior:
 
-- le compagnon demarre avec `food = 1`, `hunger = 50`, `energy = 50`;
-- en `IDLE`, la faim baisse de `2` par heure;
-- en `IDLE` sans alerte, le panneau d'activite affiche `chill`;
-- `HUNT` dure `20 min`, coute `2` energie, coute `0..2` faim et peut rapporter `0`, `1`, `2` ou `4` nourritures;
-- les chances de base de `HUNT` sont `+0 20%`, `+1 48%`, `+2 24%`, `+4 8%`;
-- les stats `ATK`, `DEF` et `LCK` peuvent ameliorer les resultats de chasse;
-- `EAT` dure `3 min`, consomme `1` nourriture et remonte la faim de `20`;
-- pendant `HUNT` et `EAT`, la zone d'activite affiche l'action et le temps restant;
-- `ARENA` coute `5` energie et `5` faim, resout un combat automatique toutes les `2 min`, affiche les wins en cours et se termine quand les HP du run tombent a `0`;
-- a la fin de `ARENA`, une fenetre affiche `WINS`, `XP` et `LV` jusqu'a appui sur `Select`;
-- les files `HUNT`, `EAT` et `ARENA` se lancent une action a la fois depuis un selecteur numerique;
-- la progression demarre a `LV 1`, `XP 0/10`, `HP 10`, `ATK 2`, `DEF 1`, `LCK 1`;
-- le niveau courant s'affiche au-dessus des jauges `E`, `H` et `F` sur l'accueil;
-- le stock de nourriture est affiche sur l'accueil sous forme de jauge `F`;
-- `SLEEP` remonte l'energie de `10` par heure, baisse la faim de `3` par heure et reveille automatiquement a `08:00`;
-- si la temperature passe a `33.0 C`, une notification `HOT` s'affiche pendant `PET_NOTICE_MS`;
-- pendant la notification `HOT`, la LED rouge s'allume, puis s'eteint quand la notification est finie;
-- quand `HUNT`, `EAT` ou `ARENA` se termine normalement, la LED rouge joue un court motif non bloquant;
-- l'alerte chaud peut se relancer apres etre repassee sous `32.0 C`;
-- une perte Wi-Fi ou bridge affiche aussi une notification temporaire `NET KO`.
+- the companion starts with `food = 1`, `hunger = 50`, `energy = 50`;
+- in `IDLE`, hunger decreases by `2` per hour;
+- in `IDLE` with no alert, the activity panel shows `chill`;
+- `HUNT` lasts `20 min`, costs `2` energy, costs `0..2` hunger, and can return `0`, `1`, `2`, or `4` food;
+- base `HUNT` chances are `+0 20%`, `+1 48%`, `+2 24%`, `+4 8%`;
+- `ATK`, `DEF`, and `LCK` can improve hunt results;
+- `EAT` lasts `3 min`, consumes `1` food, and restores `20` hunger; during `EAT`, the `H` gauge blinks;
+- during `HUNT` and `EAT`, the activity area shows the action and remaining time;
+- at the end of `HUNT` and `EAT`, a modal summarizes food, hunger, and energy changes until `Select` is pressed;
+- `ARENA` costs `5` energy and `5` hunger, resolves an automatic fight every `2 min`, shows current wins, plays a random attack or hurt animation, and ends when run HP reaches `0`;
+- at the end of the `ARENA` queue, a modal shows `RUNS`, `WINS`, `XP`, and `LV` until `Select` is pressed;
+- `HUNT`, `EAT`, and `ARENA` queues launch one action at a time from a numeric selector;
+- progression starts at `LV 1`, `XP 0/10`, `HP 10`, `ATK 2`, `DEF 1`, `LCK 1`;
+- current level is shown above the `E`, `H`, and `F` gauges on the home page;
+- food stock is shown on the home page as the `F` gauge;
+- `SLEEP` restores `10` energy every `30 min`, decreases hunger by `3` per hour, and wakes automatically at `08:00`;
+- during `SLEEP`, the `E` gauge blinks and the next energy bonus timer is shown while energy is not full;
+- when temperature reaches `33.0 C`, a `HOT` notice appears for `PET_NOTICE_MS`;
+- during `HOT`, the red LED turns on, then turns off when the notice ends;
+- when `HUNT`, `EAT`, or `ARENA` finishes normally, the red LED plays a short non-blocking pattern;
+- the heat alert can trigger again after temperature falls below `32.0 C`;
+- Wi-Fi or bridge loss can also show a temporary `NET KO` notice.
 
-Document gameplay:
+### Optional User Potentiometer
 
-- la refonte `ARENA` / progression / `HUNT` est decrite dans `docs/pet-arena-progression-refactor.md`;
-- le firmware implemente maintenant une premiere version de cette refonte.
+If you want a user potentiometer:
 
-### Potentiometre utilisateur optionnel
-
-Si tu veux un potentiometre utilisateur:
-
-| Potentiometre | ESP32 |
+| Potentiometer | ESP32 |
 | --- | --- |
-| extremite 1 | 3V3 |
-| extremite 2 | GND |
-| curseur | GPIO 34 |
+| end 1 | 3V3 |
+| end 2 | GND |
+| wiper | GPIO 34 |
 
-Le firmware declare deja `USER_POT_PIN`, mais ne l'utilise pas encore.
+The firmware already declares `USER_POT_PIN`, but does not use it yet.
 
-## Configuration firmware
+## Firmware Configuration
 
-Le firmware utilise `include/config.h` s'il existe, sinon `include/config.example.h`.
+The firmware uses `include/config.h` when it exists, otherwise it falls back to
+`include/config.example.h`.
 
-Renseigne dans `include/config.h`:
+Fill in `include/config.h`:
 
 ```cpp
 #define WIFI_SSID "..."
 #define WIFI_PASSWORD "..."
-#define PROXMOX_METRICS_URL "http://IP_DU_BRIDGE:8080/metrics"
-#define WEATHER_URL "http://IP_DU_SECOND_ESP32/api"
+#define PROXMOX_METRICS_URL "http://BRIDGE_IP:8080/metrics"
+#define WEATHER_URL "http://WEATHER_STATION_IP/api"
+#define DASHBOARD_WEATHER_ENABLED_DEFAULT 0
+#define DASHBOARD_PROXMOX_ENABLED_DEFAULT 0
+#define DASHBOARD_HOME_INFO_MODE_DEFAULT 0
 #define OTA_HOSTNAME "admin-dashboard"
-#define OTA_PASSWORD "MOT_DE_PASSE_OTA"
+#define OTA_PASSWORD "OTA_PASSWORD"
 ```
 
-Important: `PROXMOX_METRICS_URL` n'est pas l'URL de l'interface web Proxmox et ce n'est pas l'URL brute de l'API Proxmox. C'est l'URL du bridge `proxmox_bridge.py`, qui lui-meme va interroger Proxmox.
+Important: `PROXMOX_METRICS_URL` is not the Proxmox web UI URL and not the raw
+Proxmox API URL. It is the URL of `proxmox_bridge.py`, which then queries
+Proxmox.
 
-En reel, si ton serveur Proxmox a l'IP `192.168.1.20` et que tu fais tourner le bridge dessus:
+`DASHBOARD_WEATHER_ENABLED_DEFAULT` and `DASHBOARD_PROXMOX_ENABLED_DEFAULT`
+default to `0` in the example to avoid blocking network calls for users who do
+not have those services. They can later enable `WEATHER ON` or `PROXMOX ON`
+from `SETTINGS`. `DASHBOARD_HOME_INFO_MODE_DEFAULT` is `0` for `AUTO`, `1` to
+force temperature, or `2` to force clock.
+
+For example, if your Proxmox server has IP `192.168.1.20` and the bridge runs
+on it:
 
 ```cpp
 #define PROXMOX_METRICS_URL "http://192.168.1.20:8080/metrics"
 ```
 
-Le Mac ne sert que pour le test mock. En usage normal, il ne sert a rien.
+### DigiBat Parameters
 
-### Parametres Tamagotchi
-
-Les horaires et seuils sont configurables dans `include/config.h`:
+Timing and thresholds are configurable in `include/config.h`:
 
 ```cpp
 #define PET_TIMEZONE "CET-1CEST,M3.5.0/2,M10.5.0/3"
@@ -228,7 +276,8 @@ Les horaires et seuils sont configurables dans `include/config.h`:
 #define PET_EAT_HUNGER_GAIN 20
 #define PET_EAT_MAX_ENERGY_COST 5
 #define PET_IDLE_HUNGER_LOSS_PER_HOUR 2
-#define PET_SLEEP_ENERGY_GAIN_PER_HOUR 10
+#define PET_SLEEP_ENERGY_GAIN 10
+#define PET_SLEEP_ENERGY_TICK_MS (30UL * 60UL * 1000UL)
 #define PET_SLEEP_HUNGER_LOSS_PER_HOUR 3
 #define PET_HUNT_DURATION_MS (20UL * 60UL * 1000UL)
 #define PET_EAT_DURATION_MS (3UL * 60UL * 1000UL)
@@ -247,91 +296,88 @@ Les horaires et seuils sont configurables dans `include/config.h`:
 #define PET_ARENA_XP_PERCENT_AT_TARGET 35
 ```
 
-La timezone ci-dessus correspond a la France metropolitaine avec changement
-heure ete/hiver. L'ESP32 utilise NTP pour les routines horaires.
+The timezone above matches mainland France with daylight saving time. The ESP32
+uses NTP for time-based routines.
 
-## Mise a jour OTA par Wi-Fi
+## OTA Updates Over Wi-Fi
 
-L'OTA permet d'envoyer les futures mises a jour sans reconnecter l'ESP32 en USB.
-Il faut tout de meme faire un premier flash USB avec le firmware OTA.
+OTA lets you send future updates without reconnecting the ESP32 over USB. You
+still need one first USB flash with OTA-capable firmware.
 
-### 1. Configurer le mot de passe OTA
+### 1. Configure the OTA Password
 
-Dans `include/config.h`, renseigne:
+In `include/config.h`, set:
 
 ```cpp
 #define OTA_HOSTNAME "admin-dashboard"
-#define OTA_PASSWORD "MOT_DE_PASSE_OTA_SOLIDE"
+#define OTA_PASSWORD "STRONG_OTA_PASSWORD"
 ```
 
-Le hostname sert a joindre l'ESP32 via mDNS: `admin-dashboard.local`.
+The hostname lets you reach the ESP32 through mDNS:
+`admin-dashboard.local`.
 
-### 2. Premier flash en USB
+### 2. First USB Flash
 
-Branche l'ESP32 en USB, puis lance:
+Plug the ESP32 over USB, then run:
 
 ```sh
 pio run -e nodemcu-32s --target upload
 pio device monitor
 ```
 
-Quand le Wi-Fi est connecte, le moniteur serie doit afficher:
+When Wi-Fi is connected, the serial monitor should show:
 
 ```text
 OTA ready: admin-dashboard
 ```
 
-### 3. Uploads suivants par Wi-Fi
+### 3. Later Uploads Over Wi-Fi
 
-L'ESP32 doit rester allume et connecte au meme Wi-Fi que ton Mac.
+The ESP32 must stay powered and connected to the same Wi-Fi network as your Mac.
 
-Commande rapide recommandee si `pio` n'est pas dans le `PATH`:
+Recommended command if `pio` is not in your `PATH`:
 
 ```sh
-OTA_PASSWORD='MOT_DE_PASSE_OTA_SOLIDE' /Users/aki/.platformio/penv/bin/pio run -e nodemcu-32s-ota --target upload
+OTA_PASSWORD='STRONG_OTA_PASSWORD' /Users/aki/.platformio/penv/bin/pio run -e nodemcu-32s-ota --target upload
 ```
 
-Si `pio` fonctionne directement dans ton terminal, la version courte est:
+If `pio` works directly in your terminal, use the shorter version:
 
 ```sh
-OTA_PASSWORD='MOT_DE_PASSE_OTA_SOLIDE' pio run -e nodemcu-32s-ota --target upload
+OTA_PASSWORD='STRONG_OTA_PASSWORD' pio run -e nodemcu-32s-ota --target upload
 ```
 
-Tu peux aussi exporter le mot de passe une seule fois dans le terminal courant:
+You can also export the password once in the current terminal:
 
 ```sh
-export OTA_PASSWORD='MOT_DE_PASSE_OTA_SOLIDE'
+export OTA_PASSWORD='STRONG_OTA_PASSWORD'
 /Users/aki/.platformio/penv/bin/pio run -e nodemcu-32s-ota --target upload
 ```
 
-Si `admin-dashboard.local` ne resout pas sur ton reseau, remplace temporairement
-`upload_port` dans `platformio.ini` par l'adresse IP de l'ESP32:
+If `admin-dashboard.local` does not resolve on your network, temporarily
+replace `upload_port` in `platformio.ini` with the ESP32 IP address:
 
 ```ini
 upload_port = 192.168.1.xx
 ```
 
-Si l'upload reste bloque sur `Sending invitation to 192.168.1.xx`, PlatformIO
-arrive a lancer l'envoi mais l'ESP32 ne repond pas encore au service OTA. Verifie
-dans cet ordre:
+If upload stays stuck on `Sending invitation to 192.168.1.xx`, PlatformIO is
+starting the transfer but the ESP32 is not answering OTA yet. Check in this
+order:
 
-- le firmware actuellement flashe sur l'ESP32 contient bien OTA; le tout premier
-  firmware OTA doit etre envoye en USB;
-- le moniteur serie affiche bien `OTA ready: admin-dashboard` apres la connexion
-  Wi-Fi;
-- sans USB, va sur la page `NETWORK` de l'OLED et verifie la ligne `OTA:`:
-  `ON :3232` veut dire que le service OTA ecoute, `OFF WIFI` indique que le
-  Wi-Fi n'est pas connecte, et `OFF INIT` indique que l'OTA n'est pas encore
-  initialise;
-- l'adresse IP utilisee est bien celle de l'ESP32 dashboard, pas celle du second
-  ESP32 meteo ni celle du bridge;
-- le Mac et l'ESP32 sont sur le meme reseau Wi-Fi/VLAN, sans isolation client;
-- le mot de passe `OTA_PASSWORD` du terminal correspond au firmware deja flashe.
+- the firmware currently flashed on the ESP32 includes OTA; the first OTA-capable
+  firmware must be sent over USB;
+- the serial monitor shows `OTA ready: admin-dashboard` after Wi-Fi connects;
+- without USB, open the OLED `NETWORK` page and check the `OTA:` line:
+  `ON :3232` means the OTA service is listening, `OFF WIFI` means Wi-Fi is not
+  connected, and `OFF INIT` means OTA has not initialized yet;
+- the IP address is the dashboard ESP32 IP, not the weather ESP32 or bridge IP;
+- your Mac and ESP32 are on the same Wi-Fi/VLAN, without client isolation;
+- the terminal `OTA_PASSWORD` matches the password already flashed in firmware.
 
-Pour une utilisation stable, reserve l'adresse IP de l'ESP32 dans ta box ou ton
-routeur.
+For stable use, reserve the ESP32 IP address in your router.
 
-## Format JSON attendu
+## Expected JSON Format
 
 Bridge Proxmox:
 
@@ -364,16 +410,18 @@ Bridge Proxmox:
 }
 ```
 
-`ram` et `storage` restent des pourcentages. Les champs `*_gb` donnent les quantites reelles en GiB.
-`guests` contient les VMs et LXC, limites a `10` entrees par defaut cote bridge et a `6` pages maximum cote ESP32.
+`ram` and `storage` remain percentages. `*_gb` fields provide real quantities
+in GiB. `guests` contains VMs and LXC containers, limited to `10` entries by
+default on the bridge side and `6` maximum pages on the ESP32 side.
 
-ESP32 meteo:
+Weather ESP32:
 
 ```json
 {"temperature":31.9,"humidity":45,"status":"OPTIMAL","datetime":"19:30 - 02/07/2026","ip":"192.168.1.30"}
 ```
 
-Si l'IP de ta station meteo ouvre une page HTML, c'est normal. Le firmware ne doit pas appeler la page racine, il doit appeler l'API JSON:
+If your weather station IP opens an HTML page, that is normal. The firmware
+must not call the root page; it must call the JSON API:
 
 ```cpp
 #define WEATHER_URL "http://192.168.1.30/api"
@@ -381,31 +429,20 @@ Si l'IP de ta station meteo ouvre une page HTML, c'est normal. Le firmware ne do
 
 ## Bridge Proxmox
 
-Le script `bridge/proxmox_bridge.py` utilise uniquement la bibliotheque standard Python.
+The `bridge/proxmox_bridge.py` script uses only the Python standard library.
 
-Tu peux le faire tourner directement sur Proxmox, dans une VM, dans un LXC, ou sur une autre machine toujours allumee. Le plus logique dans ton cas: sur le serveur Proxmox lui-meme ou dans un petit LXC.
+You can run it directly on Proxmox, in a VM, in an LXC, or on another always-on
+machine. The simplest setup is usually the Proxmox server itself or a small LXC.
 
-Pour la procedure LXC complete, avec ressources conseillees, token Proxmox, service systemd et tests, lis:
+Example when the bridge runs on the Proxmox server itself:
 
-```text
-docs/proxmox-lxc-setup.md
-```
-
-Si tu reutilises ton conteneur hub existant, utilise plutot le guide avec commandes copiables:
-
-```text
-docs/install-existing-container.md
-```
-
-Exemple si le bridge tourne sur le serveur Proxmox lui-meme:
-
-Variables d'environnement:
+Environment variables:
 
 ```sh
 export PVE_HOST="https://127.0.0.1:8006"
 export PVE_NODE="pve"
 export PVE_TOKEN_ID='root@pam!esp32-dashboard'
-export PVE_TOKEN_SECRET='SECRET_DU_TOKEN'
+export PVE_TOKEN_SECRET='TOKEN_SECRET'
 export PVE_VERIFY_SSL="false"
 python3 bridge/proxmox_bridge.py
 ```
@@ -413,29 +450,29 @@ python3 bridge/proxmox_bridge.py
 Endpoint:
 
 ```sh
-curl http://IP_DU_PROXMOX:8080/metrics
+curl http://PROXMOX_IP:8080/metrics
 ```
 
-L'ESP32 doit appeler cette URL HTTP simple:
+The ESP32 must call this simple HTTP URL:
 
 ```cpp
-#define PROXMOX_METRICS_URL "http://IP_DU_PROXMOX:8080/metrics"
+#define PROXMOX_METRICS_URL "http://PROXMOX_IP:8080/metrics"
 ```
 
-Le bridge, lui, appelle l'API Proxmox:
+The bridge calls the Proxmox API:
 
 ```text
 https://127.0.0.1:8006/api2/json/nodes/pve/status
 ```
 
-Donc il y a deux flux differents:
+There are two separate flows:
 
-- ESP32 -> bridge: `http://IP_DU_PROXMOX:8080/metrics`
+- ESP32 -> bridge: `http://PROXMOX_IP:8080/metrics`
 - bridge -> Proxmox API: `https://127.0.0.1:8006/...`
 
-## Build et upload
+## Build and Upload
 
-Avec PlatformIO:
+With PlatformIO:
 
 ```sh
 pio run
@@ -443,50 +480,14 @@ pio run --target upload
 pio device monitor
 ```
 
-Le projet cible `board = nodemcu-32s` dans `platformio.ini`.
+The project targets `board = nodemcu-32s` in `platformio.ini`.
 
-## Test rapide sans Proxmox
+## Recommended Next Step
 
-Avant de brancher Proxmox et le deuxieme ESP32, tu peux tester l'OLED avec un serveur mock sur ton Mac.
+For a more robust V2, replace weather HTTP polling with MQTT:
 
-1. Trouve l'IP locale de ton Mac:
+- the second ESP32 publishes `home/weather/livingroom`;
+- the dashboard subscribes to that topic;
+- Proxmox can stay on the HTTP bridge or publish through MQTT too.
 
-```sh
-ipconfig getifaddr en0
-```
-
-2. Lance le mock:
-
-```sh
-python3 tools/mock_dashboard_api.py
-```
-
-3. Dans `include/config.h`, configure les deux URLs vers ton Mac:
-
-```cpp
-#define PROXMOX_METRICS_URL "http://IP_DU_MAC:18080/metrics"
-#define WEATHER_URL "http://IP_DU_MAC:18080/weather"
-```
-
-4. Upload le firmware:
-
-```sh
-pio run --target upload
-pio device monitor
-```
-
-Resultat attendu:
-
-- l'OLED affiche l'accueil Tamagotchi avec temperature, activite, niveau et jauges `E/H/F`;
-- les pages Proxmox affichent CPU, RAM, disque et uptime;
-- les valeurs mock changent doucement toutes seules.
-
-## Prochaine evolution recommandee
-
-La V2 devrait remplacer le polling HTTP meteo par MQTT si tu veux quelque chose de plus robuste:
-
-- le deuxieme ESP32 publie `home/weather/livingroom`;
-- le dashboard s'abonne au topic;
-- Proxmox peut rester en HTTP bridge ou publier lui aussi vers MQTT.
-
-Garde le token Proxmox cote serveur, jamais dans le firmware ESP32.
+Keep the Proxmox token on the server side, never in ESP32 firmware.
