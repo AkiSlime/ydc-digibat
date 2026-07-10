@@ -1,6 +1,6 @@
 # Quickstart
 
-This guide gets **Your Pet Desk: DigiBat** running on an ESP32 with a small
+This guide gets **Your Desk Companion: DigiBat** running on an ESP32 with a small
 OLED display.
 
 For day-to-day usage, also read `docs/firmware-user-guide.md`.

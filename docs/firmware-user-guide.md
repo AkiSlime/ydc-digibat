@@ -1,4 +1,4 @@
-# Your Pet Desk: DigiBat Firmware User Guide
+# Your Desk Companion: DigiBat Firmware User Guide
 
 This firmware turns an ESP32 with a small OLED screen into a desk dashboard and
 a tiny virtual pet companion.
@@ -163,7 +163,7 @@ In this view, `Next` and `Previous` change pages. `Select` closes the sheet.
 
 A hunt:
 
-- lasts 20 minutes;
+- lasts 10 minutes;
 - costs energy;
 - may reduce hunger;
 - may earn food.

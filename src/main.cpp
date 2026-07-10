@@ -113,7 +113,7 @@ const uint8_t BASE_PAGE_COUNT = 3;
 #endif
 
 #ifndef PET_HUNT_DURATION_MS
-#define PET_HUNT_DURATION_MS (20UL * 60UL * 1000UL)
+#define PET_HUNT_DURATION_MS (10UL * 60UL * 1000UL)
 #endif
 
 #ifndef PET_EAT_DURATION_MS

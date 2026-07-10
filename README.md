@@ -1,13 +1,13 @@
-# Your Pet Desk: DigiBat
+# Your Desk Companion: DigiBat
 
 A tiny ESP32 OLED virtual pet desk companion.
 
-**Your Pet Desk: DigiBat** is an ESP32 firmware for a small OLED screen. It
+**Your Desk Companion: DigiBat** is an ESP32 firmware for a small OLED screen. It
 turns a desk module into a pixel-art companion: a digital bat you can feed, let
 sleep, send hunting, and train in arena battles between coding sessions,
 ChatGPT chats, or Claude Code runs.
 
-The project, also called **YPD**, mixes a desk dashboard with a virtual pet
+The project, also called **YDC**, mixes a desk dashboard with a virtual pet
 inspired by creature-training games, handheld digital pets, and always-on desk
 companions.
 
@@ -139,7 +139,7 @@ From the home page, `Select` opens the full-screen vertical menu:
 - `STATS`: show the character sheet;
 - `SLEEP`: put the companion to sleep;
 - `EAT`: open the useful-meal count selector;
-- `HUNT`: open the 20-minute hunt count selector;
+- `HUNT`: open the 10-minute hunt count selector;
 - `ARENA`: open the automatic battle run selector to earn XP;
 - `SETTINGS`: enable/disable optional integrations and choose temperature/clock on the home page;
 - `SCREEN OFF`: turn the OLED off;
@@ -187,7 +187,7 @@ Current behavior:
 - the companion starts with `food = 1`, `hunger = 50`, `energy = 50`;
 - in `IDLE`, hunger decreases by `2` per hour;
 - in `IDLE` with no alert, the activity panel shows `chill`;
-- `HUNT` lasts `20 min`, costs `2` energy, costs `0..2` hunger, and can return `0`, `1`, `2`, or `4` food;
+- `HUNT` lasts `10 min`, costs `2` energy, costs `0..2` hunger, and can return `0`, `1`, `2`, or `4` food;
 - base `HUNT` chances are `+0 20%`, `+1 48%`, `+2 24%`, `+4 8%`;
 - `ATK`, `DEF`, and `LCK` can improve hunt results;
 - `EAT` lasts `3 min`, consumes `1` food, and restores `20` hunger; during `EAT`, the `H` gauge blinks;
@@ -279,7 +279,7 @@ Timing and thresholds are configurable in `include/config.h`:
 #define PET_SLEEP_ENERGY_GAIN 10
 #define PET_SLEEP_ENERGY_TICK_MS (30UL * 60UL * 1000UL)
 #define PET_SLEEP_HUNGER_LOSS_PER_HOUR 3
-#define PET_HUNT_DURATION_MS (20UL * 60UL * 1000UL)
+#define PET_HUNT_DURATION_MS (10UL * 60UL * 1000UL)
 #define PET_EAT_DURATION_MS (3UL * 60UL * 1000UL)
 #define PET_STAT_TICK_MS (60UL * 60UL * 1000UL)
 #define PET_INITIAL_LEVEL 1
