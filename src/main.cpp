@@ -2,6 +2,9 @@
 #include <ArduinoJson.h>
 #include <ArduinoOTA.h>
 #include <esp_system.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
+#include <freertos/task.h>
 #include <HTTPClient.h>
 #include <Preferences.h>
 #include <U8g2lib.h>
@@ -244,6 +247,8 @@ struct WeatherMetrics {
 
 ProxmoxMetrics proxmox;
 WeatherMetrics weather;
+ProxmoxMetrics pendingProxmox;
+WeatherMetrics pendingWeather;
 Preferences petPrefs;
 
 const char *FIRMWARE_VERSION = "OLED v15 PET";
@@ -363,16 +368,14 @@ uint8_t arenaRunsRemaining = 0;
 uint32_t arenaAnimationStepId = 0;
 uint8_t arenaAnimationChoice = 0;
 bool arenaAnimationChoiceReady = false;
-bool weatherEnabled = DASHBOARD_WEATHER_ENABLED_DEFAULT != 0;
-bool proxmoxEnabled = DASHBOARD_PROXMOX_ENABLED_DEFAULT != 0;
+volatile bool weatherEnabled = DASHBOARD_WEATHER_ENABLED_DEFAULT != 0;
+volatile bool proxmoxEnabled = DASHBOARD_PROXMOX_ENABLED_DEFAULT != 0;
 HomeInfoMode homeInfoMode = HOME_INFO_AUTO;
 bool timeConfigured = false;
 bool otaConfigured = false;
 String otaUiStatus = "init";
 uint8_t otaUiProgress = 0;
 
-uint32_t lastProxmoxPollMs = 0;
-uint32_t lastWeatherPollMs = 0;
 uint32_t lastWifiAttemptMs = 0;
 uint32_t weatherNoticeUntilMs = 0;
 uint32_t lastNextPressMs = 0;
@@ -385,9 +388,20 @@ uint32_t taskLedPatternStepStartedMs = 0;
 volatile bool nextButtonPending = false;
 volatile bool selectButtonPending = false;
 volatile bool previousButtonPending = false;
+volatile bool proxmoxPollRequested = false;
+volatile bool weatherPollRequested = false;
+
+TaskHandle_t networkTaskHandle = nullptr;
+SemaphoreHandle_t networkResultMutex = nullptr;
+bool pendingProxmoxReady = false;
+bool pendingWeatherReady = false;
 
 const uint32_t BUTTON_LOCKOUT_MS = 300;
 const uint32_t WEATHER_NOTICE_MS = 5000;
+const uint32_t NETWORK_TASK_IDLE_MS = 100;
+const uint32_t NETWORK_WIFI_RETRY_MS = 1000;
+const uint32_t NETWORK_ERROR_BACKOFF_MS = 30000;
+const uint32_t NETWORK_TASK_STACK_SIZE = 8192;
 const uint8_t TASK_LED_PATTERN_STEP_COUNT = 5;
 const uint16_t TASK_LED_FAST_MS = 500;
 const uint16_t TASK_LED_SLOW_MS = 1000;
@@ -471,34 +485,33 @@ bool getJson(const char *url, JsonDocument &doc, String &error) {
   return true;
 }
 
-void pollProxmox() {
+bool fetchProxmoxMetrics(ProxmoxMetrics &result) {
+  result = ProxmoxMetrics();
   JsonDocument doc;
   String error;
 
   if (!getJson(PROXMOX_METRICS_URL, doc, error)) {
-    proxmox.valid = false;
-    proxmox.error = error;
-    return;
+    result.error = error;
+    return false;
   }
 
-  proxmox.cpu = doc["cpu"] | NAN;
-  proxmox.ram = doc["ram"] | NAN;
-  proxmox.ramUsedGb = doc["ram_used_gb"] | NAN;
-  proxmox.ramTotalGb = doc["ram_total_gb"] | NAN;
-  proxmox.storage = doc["storage"] | NAN;
-  proxmox.storageUsedGb = doc["storage_used_gb"] | NAN;
-  proxmox.storageTotalGb = doc["storage_total_gb"] | NAN;
-  proxmox.uptime = doc["uptime"] | 0;
-  proxmox.guestCount = 0;
+  result.cpu = doc["cpu"] | NAN;
+  result.ram = doc["ram"] | NAN;
+  result.ramUsedGb = doc["ram_used_gb"] | NAN;
+  result.ramTotalGb = doc["ram_total_gb"] | NAN;
+  result.storage = doc["storage"] | NAN;
+  result.storageUsedGb = doc["storage_used_gb"] | NAN;
+  result.storageTotalGb = doc["storage_total_gb"] | NAN;
+  result.uptime = doc["uptime"] | 0;
 
   JsonArray guests = doc["guests"].as<JsonArray>();
   if (!guests.isNull()) {
     for (JsonObject guest : guests) {
-      if (proxmox.guestCount >= MAX_GUESTS) {
+      if (result.guestCount >= MAX_GUESTS) {
         break;
       }
 
-      GuestMetrics &target = proxmox.guests[proxmox.guestCount++];
+      GuestMetrics &target = result.guests[result.guestCount++];
       target.type = guest["type"] | "";
       target.vmid = guest["vmid"] | 0;
       target.name = guest["name"] | "";
@@ -514,53 +527,182 @@ void pollProxmox() {
     }
   }
 
-  if (isnan(proxmox.cpu) || isnan(proxmox.ram) || isnan(proxmox.storage)) {
-    proxmox.valid = false;
-    proxmox.error = "fields";
-    return;
+  if (isnan(result.cpu) || isnan(result.ram) || isnan(result.storage)) {
+    result.error = "fields";
+    return false;
   }
 
-  proxmox.valid = true;
-  proxmox.error = "";
-  proxmox.lastOkMs = millis();
+  result.valid = true;
+  result.error = "";
+  result.lastOkMs = millis();
+  return true;
 }
 
-void pollWeather() {
+bool fetchWeatherMetrics(WeatherMetrics &result) {
+  result = WeatherMetrics();
   JsonDocument doc;
   String error;
-  const bool wasValid = weather.valid;
 
   if (!getJson(WEATHER_URL, doc, error)) {
-    weather.valid = false;
-    weather.error = error;
-    if (wasValid) {
+    result.error = error;
+    return false;
+  }
+
+  result.temperature = doc["temperature"] | NAN;
+  result.humidity = doc["humidity"] | NAN;
+  result.status = doc["status"] | "";
+  result.datetime = doc["datetime"] | "";
+  result.ip = doc["ip"] | "";
+
+  if (isnan(result.temperature) || isnan(result.humidity)) {
+    result.error = "fields";
+    return false;
+  }
+
+  result.valid = true;
+  result.error = "";
+  result.lastOkMs = millis();
+  return true;
+}
+
+void queueProxmoxResult(const ProxmoxMetrics &result) {
+  if (networkResultMutex == nullptr) {
+    return;
+  }
+
+  if (xSemaphoreTake(networkResultMutex, portMAX_DELAY) == pdTRUE) {
+    pendingProxmox = result;
+    pendingProxmoxReady = true;
+    xSemaphoreGive(networkResultMutex);
+  }
+}
+
+void queueWeatherResult(const WeatherMetrics &result) {
+  if (networkResultMutex == nullptr) {
+    return;
+  }
+
+  if (xSemaphoreTake(networkResultMutex, portMAX_DELAY) == pdTRUE) {
+    pendingWeather = result;
+    pendingWeatherReady = true;
+    xSemaphoreGive(networkResultMutex);
+  }
+}
+
+void applyPendingNetworkResults() {
+  if (networkResultMutex == nullptr) {
+    return;
+  }
+
+  ProxmoxMetrics nextProxmox;
+  WeatherMetrics nextWeather;
+  bool hasProxmoxResult = false;
+  bool hasWeatherResult = false;
+
+  if (xSemaphoreTake(networkResultMutex, 0) == pdTRUE) {
+    if (pendingProxmoxReady) {
+      nextProxmox = pendingProxmox;
+      pendingProxmoxReady = false;
+      hasProxmoxResult = true;
+    }
+    if (pendingWeatherReady) {
+      nextWeather = pendingWeather;
+      pendingWeatherReady = false;
+      hasWeatherResult = true;
+    }
+    xSemaphoreGive(networkResultMutex);
+  }
+
+  if (hasProxmoxResult && proxmoxEnabled) {
+    if (!nextProxmox.valid) {
+      nextProxmox.lastOkMs = proxmox.lastOkMs;
+    }
+    proxmox = nextProxmox;
+  }
+
+  if (hasWeatherResult && weatherEnabled) {
+    const bool wasValid = weather.valid;
+    if (!nextWeather.valid) {
+      nextWeather.lastOkMs = weather.lastOkMs;
+    }
+    weather = nextWeather;
+
+    if (weather.valid) {
+      weatherNoticeUntilMs = 0;
+    } else if (wasValid) {
       weatherNoticeUntilMs = millis() + WEATHER_NOTICE_MS;
       Serial.print("Weather disconnected: ");
-      Serial.println(error);
+      Serial.println(weather.error);
     }
+  }
+}
+
+bool networkDeadlineReached(uint32_t now, uint32_t deadline) {
+  return static_cast<int32_t>(now - deadline) >= 0;
+}
+
+void networkTask(void *parameter) {
+  (void)parameter;
+  uint32_t nextProxmoxPollMs = 0;
+  uint32_t nextWeatherPollMs = millis() + WEATHER_REFRESH_MS;
+
+  for (;;) {
+    const uint32_t now = millis();
+
+    if (proxmoxEnabled &&
+        (proxmoxPollRequested || networkDeadlineReached(now, nextProxmoxPollMs))) {
+      proxmoxPollRequested = false;
+      ProxmoxMetrics result;
+      const bool valid = fetchProxmoxMetrics(result);
+      queueProxmoxResult(result);
+      const uint32_t retryMs = valid ? PROXMOX_REFRESH_MS
+                                     : (result.error == "wifi" ? NETWORK_WIFI_RETRY_MS
+                                                               : NETWORK_ERROR_BACKOFF_MS);
+      nextProxmoxPollMs = millis() + retryMs;
+    }
+
+    if (weatherEnabled &&
+        (weatherPollRequested || networkDeadlineReached(now, nextWeatherPollMs))) {
+      weatherPollRequested = false;
+      WeatherMetrics result;
+      const bool valid = fetchWeatherMetrics(result);
+      queueWeatherResult(result);
+      const uint32_t retryMs = valid ? WEATHER_REFRESH_MS
+                                     : (result.error == "wifi" ? NETWORK_WIFI_RETRY_MS
+                                                               : NETWORK_ERROR_BACKOFF_MS);
+      nextWeatherPollMs = millis() + retryMs;
+    }
+
+    vTaskDelay(pdMS_TO_TICKS(NETWORK_TASK_IDLE_MS));
+  }
+}
+
+void startNetworkTask() {
+  if (networkTaskHandle != nullptr) {
     return;
   }
 
-  weather.temperature = doc["temperature"] | NAN;
-  weather.humidity = doc["humidity"] | NAN;
-  weather.status = doc["status"] | "";
-  weather.datetime = doc["datetime"] | "";
-  weather.ip = doc["ip"] | "";
-
-  if (isnan(weather.temperature) || isnan(weather.humidity)) {
-    weather.valid = false;
-    weather.error = "fields";
-    if (wasValid) {
-      weatherNoticeUntilMs = millis() + WEATHER_NOTICE_MS;
-      Serial.println("Weather disconnected: fields");
-    }
+  networkResultMutex = xSemaphoreCreateMutex();
+  if (networkResultMutex == nullptr) {
+    Serial.println("Network task mutex failed");
     return;
   }
 
-  weather.valid = true;
-  weather.error = "";
-  weatherNoticeUntilMs = 0;
-  weather.lastOkMs = millis();
+  const BaseType_t taskCreated = xTaskCreatePinnedToCore(
+      networkTask,
+      "dashboard-network",
+      NETWORK_TASK_STACK_SIZE,
+      nullptr,
+      1,
+      &networkTaskHandle,
+      0);
+
+  if (taskCreated != pdPASS) {
+    networkTaskHandle = nullptr;
+    vSemaphoreDelete(networkResultMutex);
+    networkResultMutex = nullptr;
+    Serial.println("Network task start failed");
+  }
 }
 
 String weatherTime(const String &value) {
@@ -883,6 +1025,25 @@ uint16_t arenaTargetWins() {
   return 3U + static_cast<uint16_t>(pet.level) * 2U;
 }
 
+uint8_t petSkillRank() {
+  if (pet.level >= 15) {
+    return 5;
+  }
+  if (pet.level >= 12) {
+    return 4;
+  }
+  if (pet.level >= 9) {
+    return 3;
+  }
+  if (pet.level >= 6) {
+    return 2;
+  }
+  if (pet.level >= 3) {
+    return 1;
+  }
+  return 0;
+}
+
 uint8_t clampU8(uint16_t value) {
   return value > 255U ? 255U : static_cast<uint8_t>(value);
 }
@@ -1118,21 +1279,17 @@ void finishArenaRun() {
 
 void resolveArenaCombat() {
   const uint16_t enemyLevel = pet.arenaWins + 1U;
-  const uint16_t enemyPower = enemyLevel * 2U + random(enemyLevel + 1U);
-  const uint16_t batPower = static_cast<uint16_t>(pet.atk) * 2U + pet.def + random(static_cast<uint16_t>(pet.lck) + pet.level + 1U);
-  int16_t hpLoss = 0;
-
-  if (batPower >= enemyPower) {
-    pet.arenaWins++;
-    hpLoss = static_cast<int16_t>(enemyLevel + random(3)) - pet.def;
-  } else {
-    hpLoss = static_cast<int16_t>(enemyLevel * 2U) - pet.def;
-  }
-
+  const uint16_t enemyPressure = enemyLevel * 2U + random(enemyLevel + 2U);
+  const uint8_t skillRank = petSkillRank();
+  const uint16_t statGuard = static_cast<uint16_t>(pet.def) * 2U + pet.atk + random(static_cast<uint16_t>(pet.lck) + skillRank + 1U);
+  int16_t hpLoss = static_cast<int16_t>(enemyPressure) - static_cast<int16_t>(statGuard / 2U) - skillRank;
   if (hpLoss < 1) {
     hpLoss = 1;
   }
   pet.arenaRunHp -= hpLoss;
+  if (pet.arenaRunHp > 0) {
+    pet.arenaWins++;
+  }
 }
 
 void finishPetAction() {
@@ -1149,11 +1306,11 @@ void finishPetAction() {
     pet.hunger = clampPetStat(static_cast<int16_t>(pet.hunger) - hungerCost);
     pet.food = clampFood(static_cast<int16_t>(pet.food) + foundFood);
     addPetActionResultDelta(oldFood, oldHunger, oldEnergy);
-    if (huntRunsRemaining > 0 && pet.energy >= PET_HUNT_MIN_ENERGY) {
+    if (huntRunsRemaining > 0 && pet.energy >= PET_HUNT_MIN_ENERGY && pet.food < PET_MAX_FOOD) {
       huntRunsRemaining--;
       pet.action = PET_STATE_HUNT;
     } else {
-      if (huntRunsRemaining > 0) {
+      if (huntRunsRemaining > 0 && pet.food < PET_MAX_FOOD) {
         startPetNotice(PET_NOTICE_NO_ENERGY);
       }
       huntRunsRemaining = 0;
@@ -1226,6 +1383,10 @@ bool startPetAction(PetActionState action) {
 
   switch (action) {
   case PET_STATE_HUNT:
+    if (pet.food >= PET_MAX_FOOD) {
+      startPetNotice(PET_NOTICE_FULL);
+      return false;
+    }
     if (pet.energy < PET_HUNT_MIN_ENERGY) {
       startPetNotice(PET_NOTICE_NO_ENERGY);
       return false;
@@ -1383,7 +1544,7 @@ void updateAlertLed() {
 }
 
 uint8_t maxHuntRunCount() {
-  if (PET_HUNT_ENERGY_COST == 0 || pet.energy < PET_HUNT_MIN_ENERGY) {
+  if (pet.food >= PET_MAX_FOOD || PET_HUNT_ENERGY_COST == 0 || pet.energy < PET_HUNT_MIN_ENERGY) {
     return 0;
   }
 
@@ -1667,8 +1828,9 @@ uint8_t petMenuActionCount() {
 void toggleWeatherEnabled() {
   weatherEnabled = !weatherEnabled;
   if (weatherEnabled) {
-    lastWeatherPollMs = 0;
+    weatherPollRequested = true;
   } else {
+    weatherPollRequested = false;
     clearWeatherMetrics("off");
   }
   saveDashboardSettings();
@@ -1677,8 +1839,9 @@ void toggleWeatherEnabled() {
 void toggleProxmoxEnabled() {
   proxmoxEnabled = !proxmoxEnabled;
   if (proxmoxEnabled) {
-    lastProxmoxPollMs = 0;
+    proxmoxPollRequested = true;
   } else {
+    proxmoxPollRequested = false;
     clearProxmoxMetrics("off");
     if (currentPage >= 2) {
       currentPage = PAGE_DASHBOARD;
@@ -2738,22 +2901,20 @@ const char *petTitleLabel() {
 }
 
 const char *petSkillLabel() {
-  if (pet.level >= 15) {
+  switch (petSkillRank()) {
+  case 5:
     return "NIGHT MASTER";
-  }
-  if (pet.level >= 12) {
+  case 4:
     return "BLOOD FANG";
-  }
-  if (pet.level >= 9) {
+  case 3:
     return "ECHO";
-  }
-  if (pet.level >= 6) {
+  case 2:
     return "HARD WING";
-  }
-  if (pet.level >= 3) {
+  case 1:
     return "BITE";
+  default:
+    return "NONE";
   }
-  return "NONE";
 }
 
 void drawArenaResultModal() {
@@ -3175,7 +3336,7 @@ void setup() {
 
   WiFi.setAutoReconnect(true);
   connectWifi();
-  lastWeatherPollMs = millis();
+  startNetworkTask();
 
   renderOled();
 }
@@ -3190,18 +3351,7 @@ void loop() {
   configureTimeIfNeeded();
   configureOtaIfNeeded();
   ArduinoOTA.handle();
-
-  const uint32_t now = millis();
-
-  if (proxmoxEnabled && (lastProxmoxPollMs == 0 || now - lastProxmoxPollMs >= PROXMOX_REFRESH_MS)) {
-    lastProxmoxPollMs = now;
-    pollProxmox();
-  }
-
-  if (weatherEnabled && (lastWeatherPollMs == 0 || now - lastWeatherPollMs >= WEATHER_REFRESH_MS)) {
-    lastWeatherPollMs = now;
-    pollWeather();
-  }
+  applyPendingNetworkResults();
 
   updatePetRoutine();
   updateAlertLed();

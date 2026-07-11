@@ -153,10 +153,12 @@ also includes `WAKE UP`.
 When the screen is off, any button wakes it.
 
 The home page remains available even when Wi-Fi, Proxmox, or the weather
-station does not answer. The `SETTINGS` menu lets you disable `WEATHER` or
-`PROXMOX`; when disabled, the firmware stops polling that service. In
-`HOME AUTO`, the home page shows temperature when weather is enabled and valid,
-otherwise it shows NTP time, or `--:--` if time is not synced yet.
+station does not answer. Weather and Proxmox HTTP requests run in a background
+network task, so a slow local endpoint does not block DigiBat animations or
+button input. Failed endpoints use a retry delay. The `SETTINGS` menu lets you
+disable `WEATHER` or `PROXMOX`; when disabled, the firmware stops polling that
+service. In `HOME AUTO`, the home page shows temperature when weather is enabled
+and valid, otherwise it shows NTP time, or `--:--` if time is not synced yet.
 
 Wi-Fi is mostly used for NTP time sync and OTA updates. DigiBat remains playable
 without Proxmox and without a weather station; the automatic `08:00` wake-up
@@ -190,10 +192,11 @@ Current behavior:
 - `HUNT` lasts `10 min`, costs `2` energy, costs `0..2` hunger, and can return `0`, `1`, `2`, or `4` food;
 - base `HUNT` chances are `+0 20%`, `+1 48%`, `+2 24%`, `+4 8%`;
 - `ATK`, `DEF`, and `LCK` can improve hunt results;
+- queued `HUNT` runs stop early when the food storage reaches `PET_MAX_FOOD`;
 - `EAT` lasts `3 min`, consumes `1` food, and restores `20` hunger; during `EAT`, the `H` gauge blinks;
 - during `HUNT` and `EAT`, the activity area shows the action and remaining time;
 - at the end of `HUNT` and `EAT`, a modal summarizes food, hunger, and energy changes until `Select` is pressed;
-- `ARENA` costs `5` energy and `5` hunger, resolves an automatic fight every `2 min`, shows current wins, plays a random attack or hurt animation, and ends when run HP reaches `0`;
+- `ARENA` costs `5` energy and `5` hunger, resolves an automatic endurance fight every `2 min`, counts a win only when DigiBat survives the damage, uses `ATK`, `DEF`, `LCK`, and the current skill to reduce damage, and ends when run HP reaches `0`;
 - at the end of the `ARENA` queue, a modal shows `RUNS`, `WINS`, `XP`, and `LV` until `Select` is pressed;
 - `HUNT`, `EAT`, and `ARENA` queues launch one action at a time from a numeric selector;
 - progression starts at `LV 1`, `XP 0/10`, `HP 10`, `ATK 2`, `DEF 1`, `LCK 1`;

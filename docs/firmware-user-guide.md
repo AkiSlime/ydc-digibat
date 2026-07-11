@@ -136,7 +136,9 @@ valid. Otherwise it shows the NTP-synced clock. If time is not available yet,
 it shows `--:--`.
 
 When `WEATHER` or `PROXMOX` is `OFF`, the firmware stops polling that service.
-This avoids slowdowns caused by local URLs that do not answer.
+When enabled, HTTP requests run in a background network task. A weather station
+or Proxmox bridge that is slow or unavailable therefore does not block DigiBat
+animations or button input, and failed endpoints are retried less frequently.
 
 Wi-Fi is still useful for time sync and OTA updates. DigiBat remains playable
 without Proxmox and without a weather station. The automatic 08:00 wake-up
@@ -179,6 +181,10 @@ Base results:
 
 Before starting `HUNT`, the firmware opens a quantity selector. It lets you
 choose how many hunts to queue based on available energy.
+
+If food storage is already full, `HUNT` will not start. If storage becomes full
+during a queued hunt series, the remaining hunts are skipped and the final
+`HUNT END` result is shown.
 
 During a hunt, `Select` opens the activity menu. `STOP` cancels the current
 hunt. A stopped hunt still pays its costs, but does not earn food.
@@ -230,7 +236,9 @@ An arena run:
 
 - costs energy and hunger at launch;
 - resolves one automatic fight every 2 minutes;
-- shows the current win count;
+- counts a win only if DigiBat survives that fight;
+- uses `ATK`, `DEF`, `LCK`, and the current skill to reduce incoming damage;
+- shows the current win streak;
 - plays a random animation between attacks and hurt reactions;
 - ends when the run HP reaches 0;
 - grants XP based on the result.
@@ -255,7 +263,7 @@ The activity panel can show short messages:
 - `HOT`: temperature above the configured threshold;
 - `NO ENERGY`: not enough energy;
 - `NO FOOD`: no food left;
-- `FULL`: hunger already full;
+- `FULL`: hunger or food storage already full;
 - `BUSY`: another action is blocking the request;
 - `STARVING`: hunger is very low;
 - `TIRED`: energy is low.

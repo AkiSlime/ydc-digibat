@@ -12,6 +12,7 @@ MEMORY.md
 # Local planning and legacy documentation.
 docs/install-existing-container.md
 docs/legacy-lcd.md
+docs/portable-multiplayer-ble-plan.md
 docs/pet-arena-progression-refactor.md
 docs/pet-autonomous-engine-plan.md
 docs/proxmox-lxc-setup.md
