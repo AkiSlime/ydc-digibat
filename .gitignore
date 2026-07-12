@@ -1,6 +1,7 @@
 .pio/
 .vscode/
 include/config.h
+*.DS_Store
 *.pyc
 __pycache__/
 .env
@@ -11,11 +12,13 @@ MEMORY.md
 
 # Local planning and legacy documentation.
 docs/install-existing-container.md
+docs/firmware-architecture-plan.md
 docs/legacy-lcd.md
 docs/portable-multiplayer-ble-plan.md
 docs/pet-arena-progression-refactor.md
 docs/pet-autonomous-engine-plan.md
 docs/proxmox-lxc-setup.md
+docs/public-release-plan.md
 docs/tamagotchi-plan.md
 
 # Local helper scripts not required to build or run the firmware.
