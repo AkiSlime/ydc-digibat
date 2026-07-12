@@ -13,6 +13,8 @@ MEMORY.md
 # Local planning and legacy documentation.
 docs/install-existing-container.md
 docs/firmware-architecture-plan.md
+docs/firmware-refactor-architecture.md
+docs/firmware-refactor-plan.md
 docs/legacy-lcd.md
 docs/portable-multiplayer-ble-plan.md
 docs/pet-arena-progression-refactor.md
