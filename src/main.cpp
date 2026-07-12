@@ -354,8 +354,9 @@ PetResultType petResultType = PET_RESULT_NONE;
 PetMenuMode petMenuMode = PET_MENU_MAIN;
 uint8_t petMenuIndex = PET_ACTION_SHEET;
 uint8_t petSheetPage = 0;
-uint16_t arenaResultWins = 0;
+uint16_t arenaResultBestRun = 0;
 uint16_t arenaResultXp = 0;
+uint8_t arenaResultStartLevel = PET_INITIAL_LEVEL;
 uint8_t arenaResultLevel = PET_INITIAL_LEVEL;
 uint8_t arenaResultRuns = 0;
 int16_t petResultFoodDelta = 0;
@@ -1196,8 +1197,9 @@ void openPetActionResult(PetResultType type) {
 
 void resetArenaResultSummary() {
   arenaResultOpen = false;
-  arenaResultWins = 0;
+  arenaResultBestRun = 0;
   arenaResultXp = 0;
+  arenaResultStartLevel = pet.level;
   arenaResultLevel = pet.level;
   arenaResultRuns = 0;
 }
@@ -1252,7 +1254,9 @@ void finishArenaRun() {
   }
   addPetXp(xpGain);
 
-  arenaResultWins += runWins;
+  if (runWins > arenaResultBestRun) {
+    arenaResultBestRun = runWins;
+  }
   arenaResultXp += xpGain;
   arenaResultLevel = pet.level;
   arenaResultRuns++;
@@ -1357,13 +1361,31 @@ void cancelHuntAction() {
     return;
   }
 
+  const uint8_t oldHunger = pet.hunger;
+  const uint8_t oldEnergy = pet.energy;
   const uint8_t hungerCost = rollHuntHungerCost();
   pet.energy = clampPetStat(static_cast<int16_t>(pet.energy) - PET_HUNT_ENERGY_COST);
   pet.hunger = clampPetStat(static_cast<int16_t>(pet.hunger) - hungerCost);
+  petResultHungerDelta += static_cast<int16_t>(pet.hunger) - static_cast<int16_t>(oldHunger);
+  petResultEnergyDelta += static_cast<int16_t>(pet.energy) - static_cast<int16_t>(oldEnergy);
   huntRunsRemaining = 0;
   pet.action = PET_STATE_IDLE;
   pet.actionStartedMs = millis();
   pet.statTickMs = millis();
+  openPetActionResult(PET_RESULT_HUNT);
+  savePetState();
+}
+
+void cancelEatAction() {
+  if (pet.action != PET_STATE_EAT) {
+    return;
+  }
+
+  eatRunsRemaining = 0;
+  pet.action = PET_STATE_IDLE;
+  pet.actionStartedMs = millis();
+  pet.statTickMs = millis();
+  openPetActionResult(PET_RESULT_EAT);
   savePetState();
 }
 
@@ -1585,11 +1607,11 @@ uint8_t maxEatRunCount() {
 }
 
 String eatRunMenuLabel(uint8_t index) {
-  if (index == 0) {
-    return "F 0/" + String(pet.food);
-  }
+  const uint16_t requestedGain = static_cast<uint16_t>(index) * PET_EAT_HUNGER_GAIN;
+  const uint8_t missingHunger = 100 - pet.hunger;
+  const uint8_t hungerGain = requestedGain < missingHunger ? requestedGain : missingHunger;
 
-  return "F " + String(index) + "/" + String(pet.food);
+  return "F " + String(index) + "/" + String(pet.food) + "  H +" + String(hungerGain);
 }
 
 void startEatRunQueue(uint8_t runs) {
@@ -1635,7 +1657,7 @@ void startArenaRunQueue(uint8_t runs) {
 }
 
 uint8_t activityMenuActionCount() {
-  if (pet.action == PET_STATE_HUNT || pet.action == PET_STATE_SLEEP) {
+  if (pet.action == PET_STATE_HUNT || pet.action == PET_STATE_EAT || pet.action == PET_STATE_SLEEP) {
     return 4;
   }
 
@@ -1648,7 +1670,7 @@ String activityMenuLabel(uint8_t index) {
   }
 
   uint8_t actionIndex = 1;
-  if (pet.action == PET_STATE_HUNT) {
+  if (pet.action == PET_STATE_HUNT || pet.action == PET_STATE_EAT) {
     if (index == actionIndex) {
       return "STOP";
     }
@@ -1874,11 +1896,15 @@ void executePetAction() {
     }
 
     uint8_t actionIndex = 1;
-    if (pet.action == PET_STATE_HUNT) {
+    if (pet.action == PET_STATE_HUNT || pet.action == PET_STATE_EAT) {
       if (petMenuIndex == actionIndex) {
         petMenuOpen = false;
         petMenuMode = PET_MENU_MAIN;
-        cancelHuntAction();
+        if (pet.action == PET_STATE_HUNT) {
+          cancelHuntAction();
+        } else {
+          cancelEatAction();
+        }
         return;
       }
       actionIndex++;
@@ -2927,18 +2953,23 @@ void drawArenaResultModal() {
   oled.setFont(u8g2_font_6x12_tf);
   oled.setCursor(25, 18);
   oled.print("ARENA END");
+
+  oled.setFont(u8g2_font_5x8_tf);
   oled.setCursor(24, 30);
   oled.print("RUNS ");
   oled.print(arenaResultRuns);
-  oled.print(" W ");
-  oled.print(arenaResultWins);
-  oled.setCursor(24, 42);
+  oled.setCursor(24, 40);
+  oled.print("BEST ");
+  oled.print(arenaResultBestRun);
+  oled.setCursor(24, 50);
   oled.print("XP +");
   oled.print(arenaResultXp);
-  oled.setCursor(24, 54);
-  oled.print("LV ");
-  oled.print(arenaResultLevel);
-  oled.setCursor(75, 54);
+  if (arenaResultLevel > arenaResultStartLevel) {
+    oled.setCursor(24, 59);
+    oled.print("LEVEL UP ");
+    oled.print(arenaResultLevel);
+  }
+  oled.setCursor(82, 59);
   oled.print("SELECT");
   oled.setDrawColor(1);
 }

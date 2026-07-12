@@ -138,7 +138,7 @@ From the home page, `Select` opens the full-screen vertical menu:
 - `Select`: confirm the selected entry;
 - `STATS`: show the character sheet;
 - `SLEEP`: put the companion to sleep;
-- `EAT`: open the useful-meal count selector;
+- `EAT`: open the useful-meal count selector with food cost and hunger gain;
 - `HUNT`: open the 10-minute hunt count selector;
 - `ARENA`: open the automatic battle run selector to earn XP;
 - `SETTINGS`: enable/disable optional integrations and choose temperature/clock on the home page;
@@ -147,8 +147,8 @@ From the home page, `Select` opens the full-screen vertical menu:
 - `BACK`: close the menu.
 
 During an activity, `Select` opens an activity menu with `STATS`, `SCREEN OFF`,
-and `BACK`. During `HUNT`, this menu also includes `STOP`. During `SLEEP`, it
-also includes `WAKE UP`.
+and `BACK`. During `HUNT` and `EAT`, this menu also includes `STOP`. During
+`SLEEP`, it also includes `WAKE UP`.
 
 When the screen is off, any button wakes it.
 
@@ -197,7 +197,7 @@ Current behavior:
 - during `HUNT` and `EAT`, the activity area shows the action and remaining time;
 - at the end of `HUNT` and `EAT`, a modal summarizes food, hunger, and energy changes until `Select` is pressed;
 - `ARENA` costs `5` energy and `5` hunger, resolves an automatic endurance fight every `2 min`, counts a win only when DigiBat survives the damage, uses `ATK`, `DEF`, `LCK`, and the current skill to reduce damage, and ends when run HP reaches `0`;
-- at the end of the `ARENA` queue, a modal shows `RUNS`, `WINS`, `XP`, and `LV` until `Select` is pressed;
+- at the end of the `ARENA` queue, a modal shows `RUNS`, the best win streak from one run, and total earned `XP`; the new level appears only after a level-up;
 - `HUNT`, `EAT`, and `ARENA` queues launch one action at a time from a numeric selector;
 - progression starts at `LV 1`, `XP 0/10`, `HP 10`, `ATK 2`, `DEF 1`, `LCK 1`;
 - current level is shown above the `E`, `H`, and `F` gauges on the home page;

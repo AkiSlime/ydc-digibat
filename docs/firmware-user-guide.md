@@ -187,7 +187,10 @@ during a queued hunt series, the remaining hunts are skipped and the final
 `HUNT END` result is shown.
 
 During a hunt, `Select` opens the activity menu. `STOP` cancels the current
-hunt. A stopped hunt still pays its costs, but does not earn food.
+hunt and the remaining queue. A stopped hunt still pays its costs, but does not
+earn food or count as a completed run. The `HUNT END` window keeps the results
+of earlier completed hunts and includes the stopped hunt's energy and hunger
+costs.
 
 At the end of one or more hunts, a `HUNT END` window shows the number of runs
 and the food, hunger, and energy changes. Press `Select` to close it.
@@ -207,7 +210,13 @@ A meal:
 The firmware avoids wasting food: if hunger is already full, eating is blocked.
 
 Like hunting, eating uses a quantity selector when multiple useful meals are
-available.
+available. The selector shows both the food that will be consumed and the
+actual hunger gain, capped at 100.
+
+During a meal, `Select` opens the activity menu. `STOP` cancels the current meal
+and the remaining queue. The interrupted meal consumes no food, grants no
+hunger, and does not count as a completed run. The `EAT END` window keeps the
+results of earlier completed meals.
 
 At the end of one or more meals, an `EAT END` window shows the number of runs
 and the food, hunger, and energy changes. Press `Select` to close it.
@@ -246,9 +255,9 @@ An arena run:
 At the end of the arena queue, a single summary window shows:
 
 - `RUNS`;
-- `WINS`;
-- `XP`;
-- `LV`.
+- `BEST`, the highest win streak reached in one run from the completed queue;
+- total earned `XP`;
+- `LEVEL UP` and the new level, only if DigiBat gained a level during the queue.
 
 This window stays visible until you press `Select`.
 
